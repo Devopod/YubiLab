@@ -91,7 +91,7 @@ function executeCode(code, language, projectPath) {
                 const proc = spawn(cmd, args, {
                     cwd: cwd || projectPath || tmpDir,
                     timeout: EXECUTION_TIMEOUT,
-                    env: { ...process.env, HOME: os.homedir() },
+                    env: { ...process.env, HOME: os.homedir(), PORT: '3000', FLASK_RUN_PORT: '3000' },
                 });
 
                 proc.stdout.on('data', (data) => {
@@ -225,7 +225,7 @@ function setupExecutor(socket) {
         function runStreaming(cmd, args, cwd) {
             const proc = spawn(cmd, args, {
                 cwd: cwd || tmpDir,
-                env: { ...process.env, HOME: os.homedir() },
+                env: { ...process.env, HOME: os.homedir(), PORT: '3000', FLASK_RUN_PORT: '3000' },
             });
 
             proc.stdout.on('data', (chunk) => {

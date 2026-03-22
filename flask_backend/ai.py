@@ -156,7 +156,8 @@ IMPORTANT: Respond ONLY with a valid JSON object (no markdown, no explanation ou
 
 Actions can be: "create", "modify", "delete"
 Always provide complete file contents, not partial.
-Create a well-structured project with proper file organization."""
+Create a well-structured project with proper file organization.
+IMPORTANT: If creating a Flask/web app, use port 3000 (NOT 5000) since port 5000 is used by YubiLab itself. Use app.run(port=3000) or os.environ.get('PORT', 3000)."""
 
     full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Current project files:
