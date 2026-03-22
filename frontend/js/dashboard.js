@@ -1,5 +1,5 @@
 // YubiLab Dashboard Module
-const API_BASE = window.location.origin;
+// Use relative URLs to avoid issues with basic-auth tunnel proxies
 
 const LANG_ICONS = {
     python: '🐍', javascript: '🟨', html: '🌐', c: '⚙️', cpp: '⚙️',
@@ -11,7 +11,7 @@ let currentUser = null;
 // Check auth
 (async function init() {
     try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        const res = await apiFetch(`/api/auth/me`);
         if (!res.ok) {
             window.location.href = '/login';
             return;
@@ -29,7 +29,7 @@ let currentUser = null;
 
 async function loadProjects() {
     try {
-        const res = await fetch(`${API_BASE}/api/projects`, { credentials: 'include' });
+        const res = await apiFetch(`/api/projects`);
         const data = await res.json();
         renderProjects(data.projects || []);
     } catch (e) {
@@ -89,10 +89,9 @@ async function handleCreateProject(e) {
     if (!name) return;
 
     try {
-        const res = await fetch(`${API_BASE}/api/projects`, {
+        const res = await apiFetch(`/api/projects`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({ name, language, description })
         });
 
@@ -114,9 +113,8 @@ async function deleteProject(id, name) {
     if (!confirm(`Delete project "${name}"? This cannot be undone.`)) return;
 
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+        const res = await apiFetch(`/api/projects/${id}`, {
             method: 'DELETE',
-            credentials: 'include'
         });
 
         if (res.ok) {
@@ -136,10 +134,9 @@ async function renameProject(id, currentName) {
     if (!newName || newName === currentName) return;
 
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+        const res = await apiFetch(`/api/projects/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({ name: newName })
         });
 
@@ -157,9 +154,8 @@ async function renameProject(id, currentName) {
 
 async function handleLogout() {
     try {
-        await fetch(`${API_BASE}/api/auth/logout`, {
+        await apiFetch(`/api/auth/logout`, {
             method: 'POST',
-            credentials: 'include'
         });
     } catch (e) {}
     window.location.href = '/login';
@@ -196,7 +192,7 @@ async function loadDashboardDeployments() {
     if (!container) return;
 
     try {
-        const res = await fetch(`${API_BASE}/api/deployments`, { credentials: 'include' });
+        const res = await apiFetch(`/api/deployments`);
         const deployments = await res.json();
 
         if (!deployments.length) {
@@ -209,7 +205,7 @@ async function loadDashboardDeployments() {
         container.innerHTML = deployments.map(dep => {
             const statusColor = dep.status === 'running' ? '#3fb950' : dep.status === 'crashed' ? '#f85149' : '#8b949e';
             const statusIcon = dep.status === 'running' ? '\ud83d\udfe2' : dep.status === 'crashed' ? '\ud83d\udd34' : '\u26aa';
-            const previewUrl = `${API_BASE}/preview-app/${dep.project_id}`;
+            const previewUrl = `/preview-app/${dep.project_id}`;
             const createdAt = dep.created_at ? new Date(dep.created_at).toLocaleString() : '';
             const langIcon = LANG_ICONS[dep.project_language] || '\ud83d\udcc4';
 
@@ -249,7 +245,7 @@ async function loadDashboardDeployments() {
 
 async function dashStopDeploy(projectId) {
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, { method: 'DELETE', credentials: 'include' });
+        const res = await apiFetch(`/api/deploy/${projectId}`, { method: 'DELETE' });
         if (res.ok) { showToast('Deployment stopped', 'success'); loadDashboardDeployments(); }
         else { const d = await res.json(); showToast(d.error || 'Failed', 'error'); }
     } catch (e) { showToast('Error: ' + e.message, 'error'); }
@@ -258,8 +254,8 @@ async function dashStopDeploy(projectId) {
 async function dashRestartDeploy(projectId) {
     showToast('Restarting...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projectId}/restart`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{}'
+        const res = await apiFetch(`/api/deploy/${projectId}/restart`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
         });
         const d = await res.json();
         if (res.ok) { showToast(`Restarted on port ${d.port}!`, 'success'); loadDashboardDeployments(); }
@@ -270,8 +266,8 @@ async function dashRestartDeploy(projectId) {
 async function dashRedeployProject(projectId) {
     showToast('Deploying...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{}'
+        const res = await apiFetch(`/api/deploy/${projectId}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
         });
         const d = await res.json();
         if (res.ok) { showToast(`Deployed on port ${d.port}!`, 'success'); loadDashboardDeployments(); }
@@ -282,7 +278,7 @@ async function dashRedeployProject(projectId) {
 async function dashDeleteDeploy(deployId) {
     if (!confirm('Delete this deployment record?')) return;
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${deployId}/delete`, { method: 'DELETE', credentials: 'include' });
+        const res = await apiFetch(`/api/deploy/${deployId}/delete`, { method: 'DELETE' });
         if (res.ok) { showToast('Deployment deleted', 'success'); loadDashboardDeployments(); }
         else { const d = await res.json(); showToast(d.error || 'Failed', 'error'); }
     } catch (e) { showToast('Error: ' + e.message, 'error'); }

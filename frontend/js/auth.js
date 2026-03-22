@@ -1,26 +1,14 @@
 // YubiLab Auth Module
-const API_BASE = window.location.origin;
+// Use relative URLs to avoid issues with basic-auth tunnel proxies
 
 // Check if already logged in
 (async function checkAuth() {
     try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        const res = await apiFetch('/api/auth/me');
         if (res.ok) {
             window.location.href = '/';
         }
     } catch (e) {}
-
-    // Only show login page if on login page
-    if (!window.location.pathname.includes('login')) {
-        try {
-            const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
-            if (!res.ok) {
-                window.location.href = '/login';
-            }
-        } catch (e) {
-            window.location.href = '/login';
-        }
-    }
 })();
 
 function switchTab(tab) {
@@ -45,10 +33,9 @@ async function handleLogin(e) {
     btn.textContent = 'Logging in...';
 
     try {
-        const res = await fetch(`${API_BASE}/api/auth/login`, {
+        const res = await apiFetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
                 username: document.getElementById('login-username').value,
                 password: document.getElementById('login-password').value,
@@ -76,10 +63,9 @@ async function handleRegister(e) {
     btn.textContent = 'Creating account...';
 
     try {
-        const res = await fetch(`${API_BASE}/api/auth/register`, {
+        const res = await apiFetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
                 username: document.getElementById('reg-username').value,
                 email: document.getElementById('reg-email').value,

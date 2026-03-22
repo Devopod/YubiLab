@@ -2,10 +2,10 @@
 // YubiLab Editor - Main Module
 // ============================================
 
-const API_BASE = window.location.origin;
+// Use relative URLs to avoid issues with basic-auth tunnel proxies
 // Socket.IO connects through same origin when behind reverse proxy (nginx/proxy on 8080/8888)
 // Falls back to port 3001 when accessed directly on port 5000
-const NODE_ENGINE_URL = (window.location.port === '5000') ? window.location.protocol + '//' + window.location.hostname + ':3001' : window.location.origin;
+const NODE_ENGINE_URL = (window.location.port === '5000') ? window.location.protocol + '//' + window.location.hostname + ':3001' : window.location.protocol + '//' + window.location.host;
 
 // State
 let projectId = null;
@@ -49,7 +49,7 @@ const FILE_ICONS = {
 (async function init() {
     // Check auth
     try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        const res = await apiFetch(`/api/auth/me`);
         if (!res.ok) { window.location.href = '/login'; return; }
     } catch (e) { window.location.href = '/login'; return; }
 
@@ -87,7 +87,7 @@ const FILE_ICONS = {
 
 async function loadProject() {
     try {
-        const res = await fetch(`${API_BASE}/api/projects`, { credentials: 'include' });
+        const res = await apiFetch(`/api/projects`);
         const data = await res.json();
         projectData = (data.projects || []).find(p => p.id === projectId);
         if (!projectData) { window.location.href = '/'; return; }
@@ -208,7 +208,7 @@ function getIconForFile(filename) {
 
 async function refreshFiles() {
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}/files`, { credentials: 'include' });
+        const res = await apiFetch(`/api/projects/${projectId}/files`);
         const data = await res.json();
         fileTree = data.files || [];
         renderFileTree();
@@ -276,9 +276,7 @@ async function openFile(path, name) {
     // Load file content
     try {
         setStatus('Loading...');
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`, {
-            credentials: 'include'
-        });
+        const res = await apiFetch(`/api/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
@@ -374,10 +372,9 @@ async function saveFile(index) {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}/files/save`, {
+        const res = await apiFetch(`/api/projects/${projectId}/files/save`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({ path: tab.path, content: tab.content })
         });
 
@@ -425,10 +422,9 @@ function createNewFolder() {
 
 async function createFileOrFolder(path, type) {
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}/files/create`, {
+        const res = await apiFetch(`/api/projects/${projectId}/files/create`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({ path, type })
         });
 
@@ -451,10 +447,9 @@ async function deleteFileOrFolder(path) {
     if (!confirm(`Delete "${path}"? This cannot be undone.`)) return;
 
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}/files/delete`, {
+        const res = await apiFetch(`/api/projects/${projectId}/files/delete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({ path })
         });
 
@@ -482,10 +477,9 @@ async function renameFileOrFolder(oldPath) {
         const newPath = dir + newName;
 
         try {
-            const res = await fetch(`${API_BASE}/api/projects/${projectId}/files/rename`, {
+            const res = await apiFetch(`/api/projects/${projectId}/files/rename`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
                 body: JSON.stringify({ old_path: oldPath, new_path: newPath })
             });
 
@@ -688,7 +682,7 @@ async function startTerminal() {
     // Fetch actual workspace path from Flask API
     let projectPath = null;
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}/workspace_path`, { credentials: 'include' });
+        const res = await apiFetch(`/api/projects/${projectId}/workspace_path`);
         if (res.ok) {
             const data = await res.json();
             projectPath = data.path;
@@ -755,7 +749,7 @@ function runCode() {
         });
     } else {
         // Fallback to REST API
-        fetch(`${NODE_ENGINE_URL}/execute`, {
+        apiFetch(`${NODE_ENGINE_URL}/execute`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code, language })
@@ -801,10 +795,21 @@ function showPreview() {
     updatePreview();
 }
 
-function updatePreview() {
+async function updatePreview() {
     const frame = document.getElementById('preview-frame');
-    // Find index.html in project
-    frame.src = `${API_BASE}/preview/${projectId}/index.html?t=${Date.now()}`;
+    // For non-HTML projects, check if there's an active deployment and use preview-app
+    if (projectData && projectData.language !== 'html') {
+        try {
+            const res = await apiFetch(`/api/deploy/${projectId}/status`);
+            const data = await res.json();
+            if (data.status === 'running') {
+                frame.src = `/preview-app/${projectId}?t=${Date.now()}`;
+                return;
+            }
+        } catch (e) { /* fall through to static preview */ }
+    }
+    // Default: static file preview for HTML projects
+    frame.src = `/preview/${projectId}/index.html?t=${Date.now()}`;
 }
 
 function togglePreview() {
@@ -873,7 +878,7 @@ function setAIAction(action) {
 
 async function loadConversations() {
     try {
-        const res = await fetch(`${API_BASE}/api/ai/conversations/${projectId}`, { credentials: 'include' });
+        const res = await apiFetch(`/api/ai/conversations/${projectId}`);
         if (!res.ok) return;
         const messages = await res.json();
         const messagesDiv = document.getElementById('ai-messages');
@@ -897,10 +902,9 @@ async function loadConversations() {
 }
 
 function saveConversation(role, content, msgType) {
-    fetch(`${API_BASE}/api/ai/conversations/${projectId}`, {
+    apiFetch(`/api/ai/conversations/${projectId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ role, content, msg_type: msgType || 'text' }),
     }).catch(() => {});
 }
@@ -951,10 +955,9 @@ async function sendAIMessage() {
             setTimeout(() => updateAgentStep(progressEl, 5), 20000);
         }
 
-        const res = await fetch(`${API_BASE}${endpoint}`, {
+        const res = await apiFetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify(body),
         });
 
@@ -1117,10 +1120,9 @@ async function agentDeploy() {
     showToast('Deploying...', 'info');
     setStatus('Deploying...');
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+        const res = await apiFetch(`/api/deploy/${projectId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({}),
         });
         const data = await res.json();
@@ -1129,7 +1131,7 @@ async function agentDeploy() {
             setStatus(`Deployed (port ${data.port})`);
             addAIMessage(`✅ Deployed successfully!\nPort: ${data.port}\nURL: ${window.location.origin}${data.url}\n\nOpening preview...`, 'system');
             setTimeout(() => {
-                document.getElementById('preview-frame').src = `${API_BASE}${data.url}?t=${Date.now()}`;
+                document.getElementById('preview-frame').src = `${data.url}?t=${Date.now()}`;
                 switchBottomTab('preview');
             }, 2000);
             loadDeployments();
@@ -1167,10 +1169,9 @@ async function agentRetryFix() {
     setTimeout(() => updateAgentStep(progressEl, 3), 5000);
 
     try {
-        const res = await fetch(`${API_BASE}/api/ai/agent`, {
+        const res = await apiFetch(`/api/ai/agent`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
                 prompt: 'Fix the error and make the app work correctly.',
                 project_id: projectId,
@@ -1230,7 +1231,7 @@ async function clearAIChat() {
     if (!confirm('Clear all AI conversation history for this project?')) return;
     document.getElementById('ai-messages').innerHTML = '<div class="ai-message system">YubiAI is ready. Ask me to generate code, debug, explain, or build your entire project!</div>';
     try {
-        await fetch(`${API_BASE}/api/ai/conversations/${projectId}`, { method: 'DELETE', credentials: 'include' });
+        await apiFetch(`/api/ai/conversations/${projectId}`, { method: 'DELETE' });
         showToast('Chat cleared', 'success');
     } catch (e) {}
 }
@@ -1269,10 +1270,9 @@ async function deployProject() {
     setStatus('Deploying...');
 
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+        const res = await apiFetch(`/api/deploy/${projectId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({}),
         });
         const data = await res.json();
@@ -1293,7 +1293,7 @@ async function deployProject() {
             // Wait a bit for the server to start, then show preview
             setTimeout(() => {
                 const frame = document.getElementById('preview-frame');
-                frame.src = `${API_BASE}${data.url}?t=${Date.now()}`;
+                frame.src = `${data.url}?t=${Date.now()}`;
                 switchBottomTab('preview');
             }, 2000);
 
@@ -1312,9 +1312,8 @@ async function deployProject() {
 async function stopDeployment(pid) {
     const targetId = pid || projectId;
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${targetId}`, {
+        const res = await apiFetch(`/api/deploy/${targetId}`, {
             method: 'DELETE',
-            credentials: 'include',
         });
         const data = await res.json();
         if (res.ok) {
@@ -1335,7 +1334,7 @@ async function loadDeployments() {
     container.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Loading deployments...</div>';
 
     try {
-        const res = await fetch(`${API_BASE}/api/deployments`, { credentials: 'include' });
+        const res = await apiFetch(`/api/deployments`);
         const deployments = await res.json();
 
         if (!deployments.length) {
@@ -1352,7 +1351,7 @@ async function loadDeployments() {
         for (const dep of deployments) {
             const statusColor = dep.status === 'running' ? '#3fb950' : dep.status === 'crashed' ? '#f85149' : '#8b949e';
             const statusIcon = dep.status === 'running' ? '🟢' : dep.status === 'crashed' ? '🔴' : '⚪';
-            const previewUrl = `${API_BASE}/preview-app/${dep.project_id}`;
+            const previewUrl = `/preview-app/${dep.project_id}`;
             const createdAt = dep.created_at ? new Date(dep.created_at).toLocaleString() : '';
 
             html += `
@@ -1392,10 +1391,9 @@ async function loadDeployments() {
 async function restartDeployment(projId) {
     showToast('Restarting deployment...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projId}/restart`, {
+        const res = await apiFetch(`/api/deploy/${projId}/restart`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({}),
         });
         const data = await res.json();
@@ -1413,10 +1411,9 @@ async function restartDeployment(projId) {
 async function redeployProject(projId) {
     showToast('Deploying...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projId}`, {
+        const res = await apiFetch(`/api/deploy/${projId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({}),
         });
         const data = await res.json();
@@ -1434,9 +1431,8 @@ async function redeployProject(projId) {
 async function deleteDeployment(deployId) {
     if (!confirm('Delete this deployment record?')) return;
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${deployId}/delete`, {
+        const res = await apiFetch(`/api/deploy/${deployId}/delete`, {
             method: 'DELETE',
-            credentials: 'include',
         });
         const data = await res.json();
         if (res.ok) {

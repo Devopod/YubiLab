@@ -48,9 +48,9 @@ def detect_run_command(project_path, language):
                 except Exception:
                     pass
 
-        # Check for Flask/Django/FastAPI apps
+        # Check for Flask/Django/FastAPI apps - use gunicorn or direct python with debug off
         if 'app.py' in files:
-            return f'{install_prefix}python3 app.py'
+            return f'{install_prefix}python3 -c "import app; app.app.run(host=\\"0.0.0.0\\", port={{port}}, debug=False)"'
         if 'main.py' in files:
             return f'{install_prefix}python3 main.py'
         if 'manage.py' in files:
@@ -127,21 +127,30 @@ def deploy_project(user, project_id):
     # Replace {port} placeholder
     run_command = run_command.replace('{port}', str(port))
 
-    # For Flask apps, inject PORT env var
+    # For Flask apps, inject PORT env var and disable debug to avoid reloader issues
     env = os.environ.copy()
     env['PORT'] = str(port)
     env['FLASK_RUN_PORT'] = str(port)
     env['HOST'] = '0.0.0.0'
+    env['FLASK_DEBUG'] = '0'
+    env['FLASK_APP'] = 'app.py'
+    # Remove WERKZEUG_SERVER_FD and WERKZEUG_RUN_MAIN to prevent socket.fromfd errors
+    env.pop('WERKZEUG_SERVER_FD', None)
+    env.pop('WERKZEUG_RUN_MAIN', None)
 
     try:
+        # Open a real log file for output redirection
+        log_file = os.path.join(project_path, '.deploy.log')
+        log_fd = open(log_file, 'w')
         proc = subprocess.Popen(
             run_command,
             shell=True,
             cwd=project_path,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            preexec_fn=os.setsid,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fd,
+            stderr=log_fd,
+            start_new_session=True,
         )
 
         deploy_url = f'/preview-app/{project_id}'

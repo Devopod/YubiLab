@@ -138,8 +138,8 @@ def get_workspace_path(project_id):
 
 
 # Proxy for deployed user apps
-@app.route('/preview-app/<int:project_id>', defaults={'path': ''})
-@app.route('/preview-app/<int:project_id>/<path:path>')
+@app.route('/preview-app/<int:project_id>', defaults={'path': ''}, methods=['GET', 'POST'])
+@app.route('/preview-app/<int:project_id>/<path:path>', methods=['GET', 'POST'])
 def preview_app(project_id, path):
     from auth import get_current_user
     from models import get_db
@@ -160,24 +160,41 @@ def preview_app(project_id, path):
         return "No running deployment", 404
 
     port = deployment['deploy_port']
+    # Include query string in proxied request
+    query_string = request.query_string.decode()
     target_url = f'http://127.0.0.1:{port}/{path}'
+    if query_string:
+        target_url += f'?{query_string}'
 
     try:
         # Forward the original request method and headers
         headers = {}
-        for key in ['Accept', 'Accept-Language', 'Content-Type']:
+        for key in ['Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'Referer']:
             if key in request.headers:
                 headers[key] = request.headers[key]
 
         if request.method == 'POST':
-            resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=10)
+            resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=15)
         else:
-            resp = req.get(target_url, headers=headers, timeout=10)
+            resp = req.get(target_url, headers=headers, timeout=15)
 
         from flask import Response
         excluded_headers = ['content-encoding', 'transfer-encoding', 'content-length']
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded_headers}
-        return Response(resp.content, status=resp.status_code, headers=resp_headers)
+
+        content = resp.content
+        content_type = resp.headers.get('Content-Type', '')
+
+        # For HTML responses, rewrite absolute URLs so static assets load through the proxy
+        if 'text/html' in content_type:
+            html = content.decode('utf-8', errors='replace')
+            prefix = f'/preview-app/{project_id}'
+            # Rewrite href="/..." and src="/..." to go through proxy
+            import re
+            html = re.sub(r'(href|src|action)="/', rf'\1="{prefix}/', html)
+            content = html.encode('utf-8')
+
+        return Response(content, status=resp.status_code, headers=resp_headers)
     except req.exceptions.ConnectionError:
         return '<html><body style="background:#0d1117;color:#8b949e;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2 style="color:#58a6ff">Starting up...</h2><p>Your app is still launching. Please wait a few seconds and refresh.</p></div></body></html>', 503
     except Exception as e:
