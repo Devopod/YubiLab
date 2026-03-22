@@ -11,9 +11,6 @@ YUBIAI_API_URL = os.environ.get(
     'YUBIAI_API_URL',
     'https://deena-handwoven-prefixally.ngrok-free.dev/api/v1/chat'
 )
-YUBIAI_API_KEY = os.environ.get(
-    'YUBIAI_API_KEY',
-    'yubi-53ab9ed53b9899b693560c1845a00428cfe0f7b1ac9f8b5d'
-)
+YUBIAI_API_KEY = os.environ.get('YUBIAI_API_KEY', '')
 
 os.makedirs(WORKSPACES_DIR, exist_ok=True)
