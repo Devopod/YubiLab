@@ -1112,3 +1112,35 @@ select:focus {
     gap: 8px;
     justify-content: flex-end;
 }
+
+/* ============================================
+   AI AGENT PROGRESS & RESULTS
+   ============================================ */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.agent-progress { background: var(--bg-tertiary) !important; border: 1px solid var(--border-color); border-radius: var(--radius-md) !important; padding: 16px !important; }
+.agent-progress-title { font-weight: 600; font-size: 0.9rem; color: var(--accent-purple); margin-bottom: 12px; }
+.agent-steps { display: flex; flex-direction: column; gap: 8px; }
+.agent-step { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); padding: 4px 0; opacity: 0.5; transition: all 0.3s ease; }
+.agent-step.active { color: var(--accent-blue); opacity: 1; font-weight: 500; }
+.agent-step.done { color: var(--accent-green); opacity: 0.8; }
+.agent-step .step-icon { font-size: 1rem; width: 20px; text-align: center; }
+.agent-step.active .step-icon.spinner { display: inline-block; animation: spin 1.5s linear infinite; }
+.agent-step.done .step-icon::after { content: ''; }
+
+.agent-result { background: var(--bg-tertiary) !important; border: 1px solid var(--accent-green); border-radius: var(--radius-md) !important; padding: 16px !important; }
+.agent-result-header { font-weight: 700; font-size: 0.95rem; color: var(--accent-green); margin-bottom: 8px; }
+.agent-plan { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5; }
+.agent-files-header { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; font-weight: 600; }
+.agent-files-list { margin-bottom: 12px; }
+.agent-file-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 0.85rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 4px; }
+.agent-file-icon { font-size: 0.9rem; }
+.agent-file-path { font-family: var(--font-mono); color: var(--accent-blue); flex: 1; }
+.agent-file-action { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; padding: 2px 6px; background: var(--bg-tertiary); border-radius: 3px; }
+.agent-run-cmd { font-size: 0.85rem; background: var(--bg-primary); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 8px; font-family: var(--font-mono); }
+.agent-run-cmd span { color: var(--text-muted); }
+.agent-run-cmd code { color: var(--accent-cyan); }
+.agent-message { font-size: 0.85rem; color: var(--text-secondary); margin-top: 8px; }
+.agent-errors { font-size: 0.85rem; color: var(--accent-red); margin-top: 8px; }
+
+.ai-message.error { border-left: 3px solid var(--accent-red); background: rgba(248,81,73,0.08) !important; }

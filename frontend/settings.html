@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YubiLab - Settings</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        .page-body { overflow-y: auto; }
+        .page-content { max-width: 800px; margin: 0 auto; padding: 32px; }
+        .page-content h1 { font-size: 1.8rem; margin-bottom: 8px; }
+        .page-content .subtitle { color: var(--text-secondary); margin-bottom: 32px; }
+        .settings-section { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 24px; margin-bottom: 16px; }
+        .settings-section h3 { margin-bottom: 16px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }
+        .settings-section h3 .icon { font-size: 1.2rem; }
+        .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-color); }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { display: flex; flex-direction: column; gap: 2px; }
+        .setting-label .name { font-weight: 500; font-size: 0.95rem; }
+        .setting-label .desc { font-size: 0.8rem; color: var(--text-muted); }
+        .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; inset: 0; background: var(--bg-hover); border-radius: 12px; transition: 0.3s; }
+        .toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: var(--text-secondary); border-radius: 50%; transition: 0.3s; }
+        .toggle input:checked + .toggle-slider { background: var(--accent-blue); }
+        .toggle input:checked + .toggle-slider::before { transform: translateX(20px); background: #fff; }
+        .profile-form { display: flex; flex-direction: column; gap: 16px; }
+        .profile-avatar { width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; margin-bottom: 8px; }
+        .danger-zone { border-color: var(--accent-red); }
+        .danger-zone h3 { color: var(--accent-red); }
+        .info-row { display: flex; gap: 12px; align-items: center; padding: 8px 0; }
+        .info-row .label { color: var(--text-muted); font-size: 0.85rem; min-width: 100px; }
+        .info-row .value { font-size: 0.9rem; }
+    </style>
+</head>
+<body class="page-body">
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <div class="logo"><a href="/" style="text-decoration:none;background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">YubiLab</a></div>
+            <div class="header-right">
+                <a href="/" class="btn btn-ghost btn-sm">Dashboard</a>
+                <a href="/docs" class="btn btn-ghost btn-sm">Docs</a>
+                <a href="/api-keys" class="btn btn-ghost btn-sm">API Keys</a>
+                <a href="/settings" class="btn btn-ghost btn-sm" style="color:var(--accent-blue);">Settings</a>
+                <button class="btn btn-ghost btn-sm" onclick="fetch('/api/auth/logout',{method:'POST',credentials:'include'}).then(()=>location.href='/login')">Logout</button>
+            </div>
+        </div>
+
+        <div class="page-content">
+            <h1>Settings</h1>
+            <p class="subtitle">Manage your account and editor preferences</p>
+
+            <!-- Profile Section -->
+            <div class="settings-section">
+                <h3><span class="icon">&#128100;</span> Profile</h3>
+                <div class="profile-avatar" id="user-avatar">U</div>
+                <div class="info-row">
+                    <span class="label">Username</span>
+                    <span class="value" id="s-username">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">Email</span>
+                    <span class="value" id="s-email">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">User ID</span>
+                    <span class="value" id="s-uid" style="font-family:var(--font-mono);color:var(--text-muted);">-</span>
+                </div>
+            </div>
+
+            <!-- Editor Settings -->
+            <div class="settings-section">
+                <h3><span class="icon">&#9997;</span> Editor</h3>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Auto Save</span>
+                        <span class="desc">Automatically save files after changes (2s debounce)</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="opt-autosave" checked onchange="saveSetting('autosave', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Minimap</span>
+                        <span class="desc">Show code minimap in editor</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="opt-minimap" checked onchange="saveSetting('minimap', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Word Wrap</span>
+                        <span class="desc">Wrap long lines in the editor</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="opt-wordwrap" onchange="saveSetting('wordwrap', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Font Size</span>
+                        <span class="desc">Editor font size in pixels</span>
+                    </div>
+                    <select id="opt-fontsize" onchange="saveSetting('fontsize', this.value)" style="width:auto;padding:6px 12px;">
+                        <option value="12">12px</option>
+                        <option value="13">13px</option>
+                        <option value="14" selected>14px</option>
+                        <option value="15">15px</option>
+                        <option value="16">16px</option>
+                        <option value="18">18px</option>
+                        <option value="20">20px</option>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Tab Size</span>
+                        <span class="desc">Number of spaces per tab</span>
+                    </div>
+                    <select id="opt-tabsize" onchange="saveSetting('tabsize', this.value)" style="width:auto;padding:6px 12px;">
+                        <option value="2">2 spaces</option>
+                        <option value="4" selected>4 spaces</option>
+                        <option value="8">8 spaces</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Terminal Settings -->
+            <div class="settings-section">
+                <h3><span class="icon">&#128187;</span> Terminal</h3>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Terminal Font Size</span>
+                        <span class="desc">Font size for the integrated terminal</span>
+                    </div>
+                    <select id="opt-termfontsize" onchange="saveSetting('termfontsize', this.value)" style="width:auto;padding:6px 12px;">
+                        <option value="12">12px</option>
+                        <option value="13" selected>13px</option>
+                        <option value="14">14px</option>
+                        <option value="16">16px</option>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Cursor Blink</span>
+                        <span class="desc">Enable blinking cursor in terminal</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="opt-cursorblink" checked onchange="saveSetting('cursorblink', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- AI Settings -->
+            <div class="settings-section">
+                <h3><span class="icon">&#129302;</span> YubiAI</h3>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Default Model</span>
+                        <span class="desc">AI model used for code generation</span>
+                    </div>
+                    <select id="opt-model" onchange="saveSetting('model', this.value)" style="width:auto;padding:6px 12px;">
+                        <option value="gpt-oss-120b" selected>GPT-OSS 120B</option>
+                        <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
+                        <option value="llama-3.1-8b-instant">Llama 3.1 8B</option>
+                        <option value="llama3-8b-8192">Llama 3 8B</option>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Temperature</span>
+                        <span class="desc">Creativity level (0 = deterministic, 1 = creative)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <input type="range" id="opt-temperature" min="0" max="100" value="70" style="width:120px;" oninput="document.getElementById('temp-val').textContent=(this.value/100).toFixed(2);saveSetting('temperature',this.value/100)">
+                        <span id="temp-val" style="font-family:var(--font-mono);font-size:0.85rem;min-width:35px;">0.70</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="settings-section danger-zone">
+                <h3><span class="icon">&#9888;</span> Danger Zone</h3>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Delete All Projects</span>
+                        <span class="desc">Permanently delete all your projects and files</span>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="if(confirm('Are you sure? This will permanently delete ALL your projects and files.')) alert('Contact admin to perform this action.')">Delete All</button>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="name">Delete Account</span>
+                        <span class="desc">Permanently delete your account and all data</span>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="if(confirm('Are you sure? This action cannot be undone.')) alert('Contact admin to perform this action.')">Delete Account</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function init() {
+            const res = await fetch(API_BASE + '/api/auth/me', {credentials:'include'});
+            if (!res.ok) { location.href = '/login'; return; }
+            const data = await res.json();
+            const user = data.user;
+            document.getElementById('s-username').textContent = user.username;
+            document.getElementById('s-email').textContent = user.email;
+            document.getElementById('s-uid').textContent = '#' + user.id;
+            document.getElementById('user-avatar').textContent = user.username.charAt(0).toUpperCase();
+            loadSettings();
+        }
+
+        function loadSettings() {
+            const s = JSON.parse(localStorage.getItem('yubilab_settings') || '{}');
+            if (s.autosave !== undefined) document.getElementById('opt-autosave').checked = s.autosave;
+            if (s.minimap !== undefined) document.getElementById('opt-minimap').checked = s.minimap;
+            if (s.wordwrap !== undefined) document.getElementById('opt-wordwrap').checked = s.wordwrap;
+            if (s.fontsize) document.getElementById('opt-fontsize').value = s.fontsize;
+            if (s.tabsize) document.getElementById('opt-tabsize').value = s.tabsize;
+            if (s.termfontsize) document.getElementById('opt-termfontsize').value = s.termfontsize;
+            if (s.cursorblink !== undefined) document.getElementById('opt-cursorblink').checked = s.cursorblink;
+            if (s.model) document.getElementById('opt-model').value = s.model;
+            if (s.temperature !== undefined) {
+                document.getElementById('opt-temperature').value = s.temperature * 100;
+                document.getElementById('temp-val').textContent = s.temperature.toFixed(2);
+            }
+        }
+
+        function saveSetting(key, value) {
+            const s = JSON.parse(localStorage.getItem('yubilab_settings') || '{}');
+            s[key] = value;
+            localStorage.setItem('yubilab_settings', JSON.stringify(s));
+        }
+
+        init();
+    </script>
+</body>
+</html>

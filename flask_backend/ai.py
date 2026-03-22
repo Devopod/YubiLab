@@ -16,6 +16,11 @@ def get_project_path(user_id, project_name):
 
 def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096):
     """Call YubiAI API."""
+    if not YUBIAI_API_KEY:
+        return {"error": "YubiAI API key not configured. Set YUBIAI_API_KEY environment variable."}
+    if not YUBIAI_API_URL:
+        return {"error": "YubiAI API URL not configured. Set YUBIAI_API_URL environment variable."}
+
     payload = {
         "message": message,
         "model": model,
@@ -38,9 +43,23 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
         )
         if resp.status_code == 200:
             return resp.json()
-        return {"error": f"API returned {resp.status_code}: {resp.text}"}
+        # Parse error more cleanly
+        error_text = resp.text
+        if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
+            return {"error": "YubiAI API endpoint is offline. The ngrok tunnel may have disconnected. Please restart the YubiAI server."}
+        if resp.status_code == 404:
+            return {"error": "YubiAI API endpoint not found (404). The server may be offline or the URL may be incorrect."}
+        if resp.status_code == 401:
+            return {"error": "YubiAI API authentication failed. Check your API key."}
+        if resp.status_code == 429:
+            return {"error": "YubiAI API rate limit exceeded. Please wait and try again."}
+        return {"error": f"YubiAI API error (HTTP {resp.status_code}). The server may be temporarily unavailable."}
+    except requests.exceptions.ConnectionError:
+        return {"error": "Cannot connect to YubiAI API. The server appears to be offline. Check if the ngrok tunnel is running."}
+    except requests.exceptions.Timeout:
+        return {"error": "YubiAI API request timed out (120s). The server may be overloaded."}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"YubiAI API error: {str(e)}"}
 
 
 @ai_bp.route('/api/ai/generate', methods=['POST'])
@@ -72,7 +91,7 @@ def ai_generate(user):
     result = call_yubiai(full_prompt, system_prompt=system_prompt)
 
     if 'error' in result:
-        return jsonify({'error': result['error']}), 500
+        return jsonify({'error': result['error'], 'action': action}), 500
 
     return jsonify({
         'response': result.get('response', ''),

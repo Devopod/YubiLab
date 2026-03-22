@@ -877,8 +877,13 @@ async function sendAIMessage() {
         codeContext = selection || monacoEditor.getValue();
     }
 
-    // Show loading
-    const loadingMsg = addAIMessage('Thinking...', 'system');
+    // Show animated progress for agent, simple loading for others
+    let progressEl = null;
+    if (aiAction === 'agent') {
+        progressEl = addAgentProgress();
+    } else {
+        progressEl = addAIMessage('Thinking...', 'system');
+    }
 
     try {
         let endpoint, body;
@@ -886,6 +891,7 @@ async function sendAIMessage() {
         if (aiAction === 'agent') {
             endpoint = '/api/ai/agent';
             body = { prompt, project_id: projectId };
+            updateAgentStep(progressEl, 1); // Analyzing
         } else {
             endpoint = '/api/ai/generate';
             body = {
@@ -896,6 +902,12 @@ async function sendAIMessage() {
             };
         }
 
+        if (aiAction === 'agent') {
+            // Simulate step progress while waiting
+            setTimeout(() => updateAgentStep(progressEl, 2), 3000); // Generating
+            setTimeout(() => updateAgentStep(progressEl, 3), 8000); // Creating files
+        }
+
         const res = await fetch(`${API_BASE}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -904,31 +916,42 @@ async function sendAIMessage() {
         });
 
         const data = await res.json();
-        loadingMsg.remove();
+
+        if (aiAction === 'agent') {
+            updateAgentStep(progressEl, 4); // Finishing
+            await new Promise(r => setTimeout(r, 500));
+        }
+        progressEl.remove();
 
         if (aiAction === 'agent' && data.agent_executed) {
-            // Agent executed - show results
-            let msg = `**Agent Plan:** ${data.plan}\n\n`;
+            // Agent executed - show rich results
+            const resultEl = document.createElement('div');
+            resultEl.className = 'ai-message assistant agent-result';
+            let html = `<div class="agent-result-header">Agent Completed</div>`;
+            html += `<div class="agent-plan">${escapeHtml(data.plan)}</div>`;
             if (data.files && data.files.length > 0) {
-                msg += `**Files created/modified:**\n`;
-                data.files.forEach(f => { msg += `  - ${f.path} (${f.action})\n`; });
+                html += `<div class="agent-files-header">Files created/modified:</div>`;
+                html += `<div class="agent-files-list">`;
+                data.files.forEach(f => {
+                    const icon = f.action === 'deleted' ? '&#128465;' : (f.action === 'modify' ? '&#9997;' : '&#128196;');
+                    html += `<div class="agent-file-item"><span class="agent-file-icon">${icon}</span><span class="agent-file-path">${escapeHtml(f.path)}</span><span class="agent-file-action">${f.action}</span></div>`;
+                });
+                html += `</div>`;
             }
             if (data.run_command) {
-                msg += `\n**Run command:** \`${data.run_command}\``;
+                html += `<div class="agent-run-cmd"><span>Run:</span> <code>${escapeHtml(data.run_command)}</code></div>`;
             }
-            msg += `\n\n${data.message}`;
+            html += `<div class="agent-message">${escapeHtml(data.message)}</div>`;
             if (data.errors && data.errors.length > 0) {
-                msg += `\n\n**Errors:** ${data.errors.join(', ')}`;
+                html += `<div class="agent-errors">Errors: ${data.errors.map(escapeHtml).join(', ')}</div>`;
             }
-            addAIMessage(msg, 'assistant');
+            resultEl.innerHTML = html;
+            document.getElementById('ai-messages').appendChild(resultEl);
+            document.getElementById('ai-messages').scrollTop = document.getElementById('ai-messages').scrollHeight;
 
             // Refresh file tree
             await refreshFiles();
-
-            // If there's a run command, ask to run it
-            if (data.run_command) {
-                showToast('Agent completed! Files created.', 'success');
-            }
+            showToast('Agent completed! Files created.', 'success');
         } else if (data.response) {
             addAIMessage(data.response, 'assistant');
 
@@ -936,11 +959,10 @@ async function sendAIMessage() {
             if (aiAction === 'generate' || aiAction === 'debug' || aiAction === 'complete') {
                 const insertBtn = document.createElement('button');
                 insertBtn.className = 'ai-action-btn';
-                insertBtn.textContent = '📋 Insert into editor';
+                insertBtn.textContent = 'Insert into editor';
                 insertBtn.style.marginTop = '8px';
                 insertBtn.onclick = () => {
                     if (monacoEditor && activeTabIndex >= 0) {
-                        // Extract code from response (remove markdown code blocks)
                         let code = data.response;
                         const codeBlockMatch = code.match(/```[\w]*\n([\s\S]*?)```/);
                         if (codeBlockMatch) code = codeBlockMatch[1];
@@ -952,12 +974,42 @@ async function sendAIMessage() {
                 messagesDiv.lastElementChild.appendChild(insertBtn);
             }
         } else if (data.error) {
-            addAIMessage(`Error: ${data.error}`, 'system');
+            addAIMessage(`Error: ${data.error}`, 'system error');
         }
     } catch (e) {
-        loadingMsg.remove();
-        addAIMessage(`Error: ${e.message}`, 'system');
+        progressEl.remove();
+        addAIMessage(`Error: ${e.message}`, 'system error');
     }
+}
+
+function addAgentProgress() {
+    const messagesDiv = document.getElementById('ai-messages');
+    const el = document.createElement('div');
+    el.className = 'ai-message system agent-progress';
+    el.innerHTML = `
+        <div class="agent-progress-title">YubiAI Agent Working...</div>
+        <div class="agent-steps">
+            <div class="agent-step active" data-step="1"><span class="step-icon spinner">&#9881;</span> Analyzing your request...</div>
+            <div class="agent-step" data-step="2"><span class="step-icon">&#128296;</span> Generating code &amp; structure...</div>
+            <div class="agent-step" data-step="3"><span class="step-icon">&#128193;</span> Creating files &amp; folders...</div>
+            <div class="agent-step" data-step="4"><span class="step-icon">&#9989;</span> Finishing up...</div>
+        </div>
+    `;
+    messagesDiv.appendChild(el);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    return el;
+}
+
+function updateAgentStep(el, step) {
+    if (!el || !el.parentNode) return;
+    el.querySelectorAll('.agent-step').forEach(s => {
+        const n = parseInt(s.dataset.step);
+        if (n < step) { s.classList.add('done'); s.classList.remove('active'); }
+        else if (n === step) { s.classList.add('active'); s.classList.remove('done'); }
+        else { s.classList.remove('active', 'done'); }
+    });
+    const messagesDiv = document.getElementById('ai-messages');
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
 function addAIMessage(text, type) {

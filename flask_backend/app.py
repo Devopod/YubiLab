@@ -10,6 +10,7 @@ from auth import auth_bp
 from projects import projects_bp
 from files import files_bp
 from ai import ai_bp
+from keys import keys_bp
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 app.secret_key = SECRET_KEY
@@ -24,6 +25,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(projects_bp)
 app.register_blueprint(files_bp)
 app.register_blueprint(ai_bp)
+app.register_blueprint(keys_bp)
 
 # Initialize database
 init_db()
@@ -43,6 +45,21 @@ def serve_login():
 @app.route('/editor')
 def serve_editor():
     return send_from_directory(app.static_folder, 'editor.html')
+
+
+@app.route('/docs')
+def serve_docs():
+    return send_from_directory(app.static_folder, 'docs.html')
+
+
+@app.route('/api-keys')
+def serve_api_keys():
+    return send_from_directory(app.static_folder, 'api-keys.html')
+
+
+@app.route('/settings')
+def serve_settings():
+    return send_from_directory(app.static_folder, 'settings.html')
 
 
 @app.route('/css/<path:filename>')
