@@ -10,7 +10,7 @@ import socket as sock
 deploy_bp = Blueprint('deploy', __name__)
 
 
-def find_free_port(start=3000, end=9000):
+def find_free_port(start=3002, end=9000):
     """Find a free port in the given range."""
     for port in range(start, end):
         try:

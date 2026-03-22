@@ -910,19 +910,16 @@ async function sendAIMessage() {
     const prompt = input.value.trim();
     if (!prompt) return;
 
-    // Add user message
     addAIMessage(prompt, 'user');
     saveConversation('user', prompt);
     input.value = '';
 
-    // Get code context
     let codeContext = '';
     if (monacoEditor && activeTabIndex >= 0) {
         const selection = monacoEditor.getModel().getValueInRange(monacoEditor.getSelection());
         codeContext = selection || monacoEditor.getValue();
     }
 
-    // Show animated progress for agent, simple loading for others
     let progressEl = null;
     if (aiAction === 'agent') {
         progressEl = addAgentProgress();
@@ -936,7 +933,7 @@ async function sendAIMessage() {
         if (aiAction === 'agent') {
             endpoint = '/api/ai/agent';
             body = { prompt, project_id: projectId };
-            updateAgentStep(progressEl, 1); // Analyzing
+            updateAgentStep(progressEl, 1);
         } else {
             endpoint = '/api/ai/generate';
             body = {
@@ -948,9 +945,10 @@ async function sendAIMessage() {
         }
 
         if (aiAction === 'agent') {
-            // Simulate step progress while waiting
-            setTimeout(() => updateAgentStep(progressEl, 2), 3000); // Generating
-            setTimeout(() => updateAgentStep(progressEl, 3), 8000); // Creating files
+            setTimeout(() => updateAgentStep(progressEl, 2), 3000);
+            setTimeout(() => updateAgentStep(progressEl, 3), 8000);
+            setTimeout(() => updateAgentStep(progressEl, 4), 15000);
+            setTimeout(() => updateAgentStep(progressEl, 5), 20000);
         }
 
         const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -963,48 +961,18 @@ async function sendAIMessage() {
         const data = await res.json();
 
         if (aiAction === 'agent') {
-            updateAgentStep(progressEl, 4); // Finishing
+            updateAgentStep(progressEl, 6);
             await new Promise(r => setTimeout(r, 500));
         }
         progressEl.remove();
 
         if (aiAction === 'agent' && data.agent_executed) {
-            // Agent executed - show rich results
-            const resultEl = document.createElement('div');
-            resultEl.className = 'ai-message assistant agent-result';
-            let html = `<div class="agent-result-header">Agent Completed</div>`;
-            html += `<div class="agent-plan">${escapeHtml(data.plan)}</div>`;
-            if (data.files && data.files.length > 0) {
-                html += `<div class="agent-files-header">Files created/modified:</div>`;
-                html += `<div class="agent-files-list">`;
-                data.files.forEach(f => {
-                    const icon = f.action === 'deleted' ? '&#128465;' : (f.action === 'modify' ? '&#9997;' : '&#128196;');
-                    html += `<div class="agent-file-item"><span class="agent-file-icon">${icon}</span><span class="agent-file-path">${escapeHtml(f.path)}</span><span class="agent-file-action">${f.action}</span></div>`;
-                });
-                html += `</div>`;
-            }
-            if (data.run_command) {
-                html += `<div class="agent-run-cmd"><span>Run:</span> <code>${escapeHtml(data.run_command)}</code></div>`;
-            }
-            html += `<div class="agent-message">${escapeHtml(data.message)}</div>`;
-            if (data.errors && data.errors.length > 0) {
-                html += `<div class="agent-errors">Errors: ${data.errors.map(escapeHtml).join(', ')}</div>`;
-            }
-            resultEl.innerHTML = html;
-            document.getElementById('ai-messages').appendChild(resultEl);
-            document.getElementById('ai-messages').scrollTop = document.getElementById('ai-messages').scrollHeight;
-
-            // Save agent result to conversations
-            saveConversation('assistant', resultEl.innerHTML, 'agent-result');
-
-            // Refresh file tree
+            renderAgentResult(data);
             await refreshFiles();
-            showToast('Agent completed! Files created.', 'success');
         } else if (data.response) {
             addAIMessage(data.response, 'assistant');
             saveConversation('assistant', data.response);
 
-            // If generating code, offer to insert it
             if (aiAction === 'generate' || aiAction === 'debug' || aiAction === 'complete') {
                 const insertBtn = document.createElement('button');
                 insertBtn.className = 'ai-action-btn';
@@ -1019,8 +987,7 @@ async function sendAIMessage() {
                         showToast('Code inserted', 'success');
                     }
                 };
-                const messagesDiv = document.getElementById('ai-messages');
-                messagesDiv.lastElementChild.appendChild(insertBtn);
+                document.getElementById('ai-messages').lastElementChild.appendChild(insertBtn);
             }
         } else if (data.error) {
             addAIMessage(`Error: ${data.error}`, 'system error');
@@ -1033,17 +1000,214 @@ async function sendAIMessage() {
     }
 }
 
+function renderAgentResult(data) {
+    const resultEl = document.createElement('div');
+    resultEl.className = 'ai-message assistant agent-result';
+    let html = '';
+
+    // Phase badge
+    const phaseBadge = data.phase === 'fix' ? '🔧 Bug Fix' : data.phase === 'update' ? '🔄 Update' : data.phase === 'plan' ? '📋 Plan' : '🏗️ Build';
+    html += `<div class="agent-result-header"><span>${phaseBadge}</span> Agent Completed</div>`;
+
+    // Roadmap
+    if (data.roadmap && data.roadmap.length > 0) {
+        html += `<div class="agent-roadmap"><div class="agent-roadmap-title">📋 Roadmap</div>`;
+        data.roadmap.forEach((step, i) => {
+            html += `<div class="agent-roadmap-step"><span class="step-num">${i + 1}</span>${escapeHtml(step)}</div>`;
+        });
+        html += `</div>`;
+    }
+
+    // Plan description
+    if (data.plan) {
+        html += `<div class="agent-plan">${escapeHtml(data.plan)}</div>`;
+    }
+
+    // Files
+    if (data.files && data.files.length > 0) {
+        html += `<div class="agent-files-header">Files created/modified:</div><div class="agent-files-list">`;
+        data.files.forEach(f => {
+            const icon = f.action === 'deleted' ? '🗑' : (f.action === 'modify' ? '✍' : '📄');
+            html += `<div class="agent-file-item"><span class="agent-file-icon">${icon}</span><span class="agent-file-path">${escapeHtml(f.path)}</span><span class="agent-file-action">${f.action}</span></div>`;
+        });
+        html += `</div>`;
+    }
+
+    // Install result
+    if (data.install_result && data.install_result.ran) {
+        const instIcon = data.install_result.success ? '✅' : '❌';
+        html += `<div class="agent-test-result" style="border-color:${data.install_result.success ? '#3fb950' : '#f85149'}"><strong>${instIcon} Dependencies:</strong> ${data.install_result.success ? 'Installed successfully' : 'Install failed'}</div>`;
+    }
+
+    // Test result
+    if (data.test_result && data.test_result.ran) {
+        const testIcon = data.test_result.passed ? '✅' : '❌';
+        html += `<div class="agent-test-result" style="border-color:${data.test_result.passed ? '#3fb950' : '#f85149'}"><strong>${testIcon} Test:</strong> ${data.test_result.passed ? 'Passed' : 'Failed'}`;
+        if (data.test_result.output && !data.test_result.passed) {
+            html += `<pre class="agent-error-output">${escapeHtml(data.test_result.output)}</pre>`;
+        }
+        html += `</div>`;
+    }
+
+    // Auto-fix result
+    if (data.auto_fix && data.auto_fix.attempted) {
+        const fixIcon = data.auto_fix.test_passed ? '✅' : '⚠️';
+        html += `<div class="agent-test-result" style="border-color:${data.auto_fix.test_passed ? '#3fb950' : '#d29922'}"><strong>${fixIcon} Auto-Fix:</strong> ${data.auto_fix.test_passed ? 'Fixed successfully!' : 'Attempted fix'}`;
+        if (data.auto_fix.message) {
+            html += `<div style="font-size:0.8rem;margin-top:4px;color:var(--text-secondary);">${escapeHtml(data.auto_fix.message)}</div>`;
+        }
+        if (data.auto_fix.fixed_files) {
+            data.auto_fix.fixed_files.forEach(f => {
+                html += `<div style="font-size:0.75rem;color:var(--accent-blue);margin-top:2px;">🔧 Fixed: ${escapeHtml(f.path)}</div>`;
+            });
+        }
+        if (data.auto_fix.remaining_error) {
+            html += `<pre class="agent-error-output">${escapeHtml(data.auto_fix.remaining_error)}</pre>`;
+        }
+        html += `</div>`;
+    }
+
+    // Run command
+    if (data.run_command) {
+        html += `<div class="agent-run-cmd"><span>Run:</span> <code>${escapeHtml(data.run_command)}</code></div>`;
+    }
+
+    // Message
+    html += `<div class="agent-message">${escapeHtml(data.message)}</div>`;
+
+    // Errors
+    if (data.errors && data.errors.length > 0) {
+        html += `<div class="agent-errors">⚠️ Warnings: ${data.errors.map(escapeHtml).join(', ')}</div>`;
+    }
+
+    // Action buttons
+    html += `<div class="agent-actions" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">`;
+    if (data.deploy_ready) {
+        html += `<button onclick="agentDeploy()" class="btn btn-sm" style="background:linear-gradient(135deg,#3fb950,#2ea44f);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🚀 Deploy Now</button>`;
+    }
+    if (data.run_command) {
+        html += `<button onclick="agentRunInTerminal('${escapeAttr(data.run_command)}')" class="btn btn-sm" style="background:var(--accent-blue);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;">▶ Run</button>`;
+    }
+    if (data.test_result && !data.test_result.passed && !(data.auto_fix && data.auto_fix.test_passed)) {
+        html += `<button onclick="agentRetryFix()" class="btn btn-sm" style="background:var(--accent-orange, #d29922);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;">🔧 Fix Again</button>`;
+    }
+    html += `</div>`;
+
+    resultEl.innerHTML = html;
+    document.getElementById('ai-messages').appendChild(resultEl);
+    document.getElementById('ai-messages').scrollTop = document.getElementById('ai-messages').scrollHeight;
+
+    saveConversation('assistant', resultEl.innerHTML, 'agent-result');
+
+    // Store last agent data for retry/deploy
+    window._lastAgentData = data;
+
+    if (data.deploy_ready) {
+        showToast('App ready to deploy! Click Deploy Now.', 'success');
+    } else if (data.auto_fix && data.auto_fix.test_passed) {
+        showToast('Agent built & auto-fixed your project!', 'success');
+    } else if (data.test_result && data.test_result.passed) {
+        showToast('Agent built & verified your project!', 'success');
+    } else {
+        showToast('Agent completed. Check results.', 'info');
+    }
+}
+
+async function agentDeploy() {
+    showToast('Deploying...', 'info');
+    setStatus('Deploying...');
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`Deployed on port ${data.port}!`, 'success');
+            setStatus(`Deployed (port ${data.port})`);
+            addAIMessage(`✅ Deployed successfully!\nPort: ${data.port}\nURL: ${window.location.origin}${data.url}\n\nOpening preview...`, 'system');
+            setTimeout(() => {
+                document.getElementById('preview-frame').src = `${API_BASE}${data.url}?t=${Date.now()}`;
+                switchBottomTab('preview');
+            }, 2000);
+            loadDeployments();
+        } else {
+            showToast(data.error || 'Deploy failed', 'error');
+            addAIMessage(`❌ Deploy failed: ${data.error || 'Unknown error'}`, 'system error');
+        }
+    } catch (e) {
+        showToast('Deploy error: ' + e.message, 'error');
+    }
+}
+
+function agentRunInTerminal(command) {
+    switchBottomTab('terminal');
+    if (socket && socket.connected) {
+        socket.emit('terminal_input', { input: command + '\r' });
+    }
+}
+
+async function agentRetryFix() {
+    const lastData = window._lastAgentData;
+    if (!lastData) return;
+
+    const errorOutput = lastData.test_result?.output || lastData.auto_fix?.remaining_error || '';
+    const input = document.getElementById('ai-input');
+    input.value = '';
+
+    addAIMessage('Retrying fix...', 'user');
+    saveConversation('user', 'Fix the remaining error');
+
+    const progressEl = addAgentProgress();
+    updateAgentStep(progressEl, 1);
+
+    setTimeout(() => updateAgentStep(progressEl, 2), 2000);
+    setTimeout(() => updateAgentStep(progressEl, 3), 5000);
+
+    try {
+        const res = await fetch(`${API_BASE}/api/ai/agent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                prompt: 'Fix the error and make the app work correctly.',
+                project_id: projectId,
+                error_context: errorOutput,
+                phase: 'fix',
+            }),
+        });
+        const data = await res.json();
+        updateAgentStep(progressEl, 6);
+        await new Promise(r => setTimeout(r, 300));
+        progressEl.remove();
+
+        if (data.agent_executed) {
+            renderAgentResult(data);
+            await refreshFiles();
+        } else if (data.error) {
+            addAIMessage(`Error: ${data.error}`, 'system error');
+        }
+    } catch (e) {
+        progressEl.remove();
+        addAIMessage(`Error: ${e.message}`, 'system error');
+    }
+}
+
 function addAgentProgress() {
     const messagesDiv = document.getElementById('ai-messages');
     const el = document.createElement('div');
     el.className = 'ai-message system agent-progress';
     el.innerHTML = `
-        <div class="agent-progress-title">YubiAI Agent Working...</div>
+        <div class="agent-progress-title">🤖 YubiAI Autonomous Agent</div>
         <div class="agent-steps">
-            <div class="agent-step active" data-step="1"><span class="step-icon spinner">&#9881;</span> Analyzing your request...</div>
-            <div class="agent-step" data-step="2"><span class="step-icon">&#128296;</span> Generating code &amp; structure...</div>
-            <div class="agent-step" data-step="3"><span class="step-icon">&#128193;</span> Creating files &amp; folders...</div>
-            <div class="agent-step" data-step="4"><span class="step-icon">&#9989;</span> Finishing up...</div>
+            <div class="agent-step active" data-step="1"><span class="step-icon spinner">⚙</span> Understanding project...</div>
+            <div class="agent-step" data-step="2"><span class="step-icon">📋</span> Planning roadmap...</div>
+            <div class="agent-step" data-step="3"><span class="step-icon">🔨</span> Generating code...</div>
+            <div class="agent-step" data-step="4"><span class="step-icon">📁</span> Creating files...</div>
+            <div class="agent-step" data-step="5"><span class="step-icon">🧪</span> Testing &amp; verifying...</div>
+            <div class="agent-step" data-step="6"><span class="step-icon">✅</span> Complete!</div>
         </div>
     `;
     messagesDiv.appendChild(el);
@@ -1059,8 +1223,7 @@ function updateAgentStep(el, step) {
         else if (n === step) { s.classList.add('active'); s.classList.remove('done'); }
         else { s.classList.remove('active', 'done'); }
     });
-    const messagesDiv = document.getElementById('ai-messages');
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    document.getElementById('ai-messages').scrollTop = document.getElementById('ai-messages').scrollHeight;
 }
 
 async function clearAIChat() {
