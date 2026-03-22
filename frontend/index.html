@@ -42,6 +42,23 @@
                 <h3 style="color:var(--text-secondary); margin-bottom:8px;">No projects yet</h3>
                 <p>Create your first project to get started!</p>
             </div>
+
+            <!-- Deployments Management Section -->
+            <div class="dashboard-title" style="margin-top:40px;">
+                <h2>Deployments</h2>
+                <button class="btn btn-ghost btn-sm" onclick="loadDashboardDeployments()" title="Refresh">🔄 Refresh</button>
+            </div>
+
+            <div id="deployments-section">
+                <div id="dashboard-deployments" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;">
+                    <!-- Deployments loaded dynamically -->
+                </div>
+                <div id="deployments-empty" style="display:none; text-align:center; padding:40px 20px; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:8px; opacity:0.3;">🚀</div>
+                    <p>No active deployments</p>
+                    <p style="font-size:0.8rem;">Open a project and click Deploy to get started</p>
+                </div>
+            </div>
         </div>
     </div>
 

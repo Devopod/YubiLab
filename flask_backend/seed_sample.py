@@ -7,6 +7,164 @@ from models import get_db
 from config import WORKSPACES_DIR
 
 
+CALCULATOR_FILES = {
+    'app.py': '''from flask import Flask, render_template, request
+import os
+
+app = Flask(__name__)
+
+# Helper function for safe evaluation
+def safe_eval(expr):
+    try:
+        # Only allow digits and operators
+        allowed_chars = "0123456789+-*/(). "
+        if any(c not in allowed_chars for c in expr):
+            return "Invalid Input"
+        return eval(expr)
+    except ZeroDivisionError:
+        return "Division by Zero Error"
+    except Exception:
+        return "Error"
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    result = ""
+    expression = ""
+    if request.method == "POST":
+        expression = request.form.get("expression", "")
+        result = safe_eval(expression)
+    return render_template("index.html", result=result, expression=expression)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", 3000)))
+    app.run(host="0.0.0.0", port=port, debug=True)
+''',
+    'requirements.txt': '''Flask==2.3.3
+''',
+    'templates/index.html': '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flask Calculator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="calculator">
+        <h2>Flask Calculator</h2>
+        <form method="POST">
+            <input type="text" name="expression" placeholder="Enter Expression" value="{{ expression }}" class="display" readonly>
+            <div class="buttons">
+                <button type="button" onclick="appendChar('7')">7</button>
+                <button type="button" onclick="appendChar('8')">8</button>
+                <button type="button" onclick="appendChar('9')">9</button>
+                <button type="button" onclick="appendChar('/')">/</button>
+
+                <button type="button" onclick="appendChar('4')">4</button>
+                <button type="button" onclick="appendChar('5')">5</button>
+                <button type="button" onclick="appendChar('6')">6</button>
+                <button type="button" onclick="appendChar('*')">*</button>
+
+                <button type="button" onclick="appendChar('1')">1</button>
+                <button type="button" onclick="appendChar('2')">2</button>
+                <button type="button" onclick="appendChar('3')">3</button>
+                <button type="button" onclick="appendChar('-')">-</button>
+
+                <button type="button" onclick="appendChar('0')">0</button>
+                <button type="button" onclick="appendChar('.')">.</button>
+                <button type="submit">=</button>
+                <button type="button" onclick="appendChar('+')">+</button>
+
+                <button type="button" onclick="clearDisplay()" class="clear">C</button>
+            </div>
+        </form>
+        {% if result != "" %}
+        <div class="result">Result: {{ result }}</div>
+        {% endif %}
+    </div>
+
+    <script>
+        function appendChar(char) {
+            let input = document.querySelector(".display");
+            input.value += char;
+        }
+        function clearDisplay() {
+            document.querySelector(".display").value = "";
+        }
+    </script>
+</body>
+</html>
+''',
+    'static/style.css': '''body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+}
+
+.calculator {
+    background: #fff;
+    padding: 20px 25px;
+    border-radius: 10px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.2);
+    text-align: center;
+    width: 300px;
+}
+
+.display {
+    width: 100%;
+    height: 40px;
+    font-size: 18px;
+    margin-bottom: 15px;
+    text-align: right;
+    padding-right: 10px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+
+.buttons {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+button {
+    padding: 15px;
+    font-size: 18px;
+    border: none;
+    border-radius: 5px;
+    background: #007bff;
+    color: white;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+button:hover {
+    background: #0056b3;
+}
+
+button.clear {
+    grid-column: span 4;
+    background: #dc3545;
+}
+
+button.clear:hover {
+    background: #a71d2a;
+}
+
+.result {
+    margin-top: 15px;
+    font-size: 20px;
+    font-weight: bold;
+}
+''',
+}
+
+
 SAMPLE_FILES = {
     'index.html': '''<!DOCTYPE html>
 <html lang="en">
@@ -199,44 +357,95 @@ if __name__ == "__main__":
 }
 
 
-def seed_sample_project(user_id):
-    """Create a sample project for the given user."""
-    conn = get_db()
-
-    # Check if sample already exists
-    existing = conn.execute(
-        'SELECT id FROM projects WHERE user_id = ? AND name = ?',
-        (user_id, 'sample-project')
-    ).fetchone()
-
-    if existing:
-        conn.close()
-        return existing['id']
-
-    cursor = conn.execute(
-        'INSERT INTO projects (user_id, name, language, description) VALUES (?, ?, ?, ?)',
-        (user_id, 'sample-project', 'html', 'Welcome to YubiLab! A sample project to get you started.')
-    )
-    project_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-
-    # Create files
-    project_path = os.path.join(WORKSPACES_DIR, str(user_id), 'sample-project')
+def _create_project_files(project_path, files_dict):
+    """Create project files, handling nested directories."""
     os.makedirs(project_path, exist_ok=True)
-
-    for filename, content in SAMPLE_FILES.items():
+    for filename, content in files_dict.items():
         filepath = os.path.join(project_path, filename)
+        # Create subdirectories if needed (e.g., templates/index.html, static/style.css)
+        filedir = os.path.dirname(filepath)
+        if filedir and not os.path.exists(filedir):
+            os.makedirs(filedir, exist_ok=True)
         with open(filepath, 'w') as f:
             f.write(content)
 
-    return project_id
+
+def seed_sample_project(user_id):
+    """Create sample projects for the given user."""
+    conn = get_db()
+
+    projects_to_seed = [
+        {
+            'name': 'sample-project',
+            'language': 'html',
+            'description': 'Welcome to YubiLab! A sample project to get you started.',
+            'files': SAMPLE_FILES,
+        },
+        {
+            'name': 'flask-calculator',
+            'language': 'python',
+            'description': 'A responsive Flask calculator web app with safe expression evaluation.',
+            'files': CALCULATOR_FILES,
+        },
+    ]
+
+    created_ids = []
+    for proj in projects_to_seed:
+        existing = conn.execute(
+            'SELECT id FROM projects WHERE user_id = ? AND name = ?',
+            (user_id, proj['name'])
+        ).fetchone()
+
+        if existing:
+            created_ids.append(existing['id'])
+            continue
+
+        cursor = conn.execute(
+            'INSERT INTO projects (user_id, name, language, description) VALUES (?, ?, ?, ?)',
+            (user_id, proj['name'], proj['language'], proj['description'])
+        )
+        project_id = cursor.lastrowid
+        conn.commit()
+        created_ids.append(project_id)
+
+        project_path = os.path.join(WORKSPACES_DIR, str(user_id), proj['name'])
+        _create_project_files(project_path, proj['files'])
+
+    conn.close()
+    return created_ids
+
+
+def seed_calculator_for_existing_users():
+    """Seed the flask-calculator project for all existing users who don't have it."""
+    conn = get_db()
+    users = conn.execute('SELECT id FROM users').fetchall()
+    conn.close()
+
+    count = 0
+    for user in users:
+        conn2 = get_db()
+        existing = conn2.execute(
+            'SELECT id FROM projects WHERE user_id = ? AND name = ?',
+            (user['id'], 'flask-calculator')
+        ).fetchone()
+        conn2.close()
+
+        if not existing:
+            seed_sample_project(user['id'])
+            count += 1
+
+    return count
 
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
-        uid = int(sys.argv[1])
-        pid = seed_sample_project(uid)
-        print(f"Sample project created for user {uid}, project ID: {pid}")
+        if sys.argv[1] == '--seed-all':
+            count = seed_calculator_for_existing_users()
+            print(f"Seeded calculator project for {count} existing users")
+        else:
+            uid = int(sys.argv[1])
+            ids = seed_sample_project(uid)
+            print(f"Sample projects created for user {uid}, project IDs: {ids}")
     else:
         print("Usage: python seed_sample.py <user_id>")
+        print("       python seed_sample.py --seed-all")

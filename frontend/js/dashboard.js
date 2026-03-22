@@ -21,6 +21,7 @@ let currentUser = null;
         document.getElementById('user-name').textContent = currentUser.username;
         document.getElementById('user-avatar').textContent = currentUser.username[0].toUpperCase();
         loadProjects();
+        loadDashboardDeployments();
     } catch (e) {
         window.location.href = '/login';
     }
@@ -183,6 +184,108 @@ function formatDate(dateStr) {
     if (!dateStr) return '';
     const d = new Date(dateStr);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ============================================
+// DEPLOYMENTS MANAGEMENT
+// ============================================
+
+async function loadDashboardDeployments() {
+    const container = document.getElementById('dashboard-deployments');
+    const empty = document.getElementById('deployments-empty');
+    if (!container) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/deployments`, { credentials: 'include' });
+        const deployments = await res.json();
+
+        if (!deployments.length) {
+            container.innerHTML = '';
+            empty.style.display = 'block';
+            return;
+        }
+
+        empty.style.display = 'none';
+        container.innerHTML = deployments.map(dep => {
+            const statusColor = dep.status === 'running' ? '#3fb950' : dep.status === 'crashed' ? '#f85149' : '#8b949e';
+            const statusIcon = dep.status === 'running' ? '\ud83d\udfe2' : dep.status === 'crashed' ? '\ud83d\udd34' : '\u26aa';
+            const previewUrl = `${API_BASE}/preview-app/${dep.project_id}`;
+            const createdAt = dep.created_at ? new Date(dep.created_at).toLocaleString() : '';
+            const langIcon = LANG_ICONS[dep.project_language] || '\ud83d\udcc4';
+
+            return `
+            <div class="project-card" style="cursor:default;">
+                <div class="project-card-header">
+                    <div class="project-card-icon">${langIcon}</div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="background:color-mix(in srgb, ${statusColor} 20%, transparent);color:${statusColor};padding:2px 8px;border-radius:12px;font-size:0.7rem;font-weight:600;">${statusIcon} ${dep.status}</span>
+                    </div>
+                </div>
+                <h3>${escapeHtml(dep.project_name || 'Project #' + dep.project_id)}</h3>
+                <div style="display:flex;gap:10px;font-size:0.8rem;color:var(--text-muted);margin:6px 0 10px;">
+                    <span>Port: <strong style="color:var(--text-secondary);">${dep.deploy_port}</strong></span>
+                    <span>PID: <strong style="color:var(--text-secondary);">${dep.deploy_pid || '-'}</strong></span>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;">
+                    ${dep.status === 'running' ? `
+                        <button onclick="event.stopPropagation(); window.open('${previewUrl}','_blank')" class="btn btn-sm" style="background:var(--accent-blue);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83c\udf10 Open</button>
+                        <button onclick="event.stopPropagation(); dashRestartDeploy(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-purple);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83d\udd04 Restart</button>
+                        <button onclick="event.stopPropagation(); dashStopDeploy(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-orange, #d29922);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\u23f9 Stop</button>
+                    ` : `
+                        <button onclick="event.stopPropagation(); dashRedeployProject(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-green);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83d\ude80 Redeploy</button>
+                    `}
+                    <button onclick="event.stopPropagation(); dashDeleteDeploy(${dep.id})" class="btn btn-sm" style="background:var(--danger);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83d\uddd1 Delete</button>
+                </div>
+                <div class="project-meta">
+                    <span class="project-lang-badge">${langIcon} ${dep.project_language || 'unknown'}</span>
+                    <span>${createdAt}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        container.innerHTML = `<div style="color:var(--danger);padding:20px;text-align:center;">Failed to load deployments</div>`;
+    }
+}
+
+async function dashStopDeploy(projectId) {
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, { method: 'DELETE', credentials: 'include' });
+        if (res.ok) { showToast('Deployment stopped', 'success'); loadDashboardDeployments(); }
+        else { const d = await res.json(); showToast(d.error || 'Failed', 'error'); }
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function dashRestartDeploy(projectId) {
+    showToast('Restarting...', 'info');
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projectId}/restart`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{}'
+        });
+        const d = await res.json();
+        if (res.ok) { showToast(`Restarted on port ${d.port}!`, 'success'); loadDashboardDeployments(); }
+        else { showToast(d.error || 'Failed', 'error'); }
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function dashRedeployProject(projectId) {
+    showToast('Deploying...', 'info');
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{}'
+        });
+        const d = await res.json();
+        if (res.ok) { showToast(`Deployed on port ${d.port}!`, 'success'); loadDashboardDeployments(); }
+        else { showToast(d.error || 'Failed', 'error'); }
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function dashDeleteDeploy(deployId) {
+    if (!confirm('Delete this deployment record?')) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${deployId}/delete`, { method: 'DELETE', credentials: 'include' });
+        if (res.ok) { showToast('Deployment deleted', 'success'); loadDashboardDeployments(); }
+        else { const d = await res.json(); showToast(d.error || 'Failed', 'error'); }
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 // Close modal on escape
