@@ -2,7 +2,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
-from flask import Flask, send_from_directory, session, jsonify
+from flask import Flask, send_from_directory, session, jsonify, request
 from flask_cors import CORS
 from config import SECRET_KEY, WORKSPACES_DIR
 from models import init_db
@@ -142,6 +142,7 @@ def get_workspace_path(project_id):
 @app.route('/preview-app/<int:project_id>/<path:path>')
 def preview_app(project_id, path):
     from auth import get_current_user
+    from models import get_db
     import requests as req
 
     user = get_current_user()
@@ -162,11 +163,25 @@ def preview_app(project_id, path):
     target_url = f'http://127.0.0.1:{port}/{path}'
 
     try:
-        resp = req.get(target_url, timeout=5)
+        # Forward the original request method and headers
+        headers = {}
+        for key in ['Accept', 'Accept-Language', 'Content-Type']:
+            if key in request.headers:
+                headers[key] = request.headers[key]
+
+        if request.method == 'POST':
+            resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=10)
+        else:
+            resp = req.get(target_url, headers=headers, timeout=10)
+
         from flask import Response
-        return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type', 'text/html'))
-    except Exception:
-        return "App not responding yet. It may still be starting up.", 503
+        excluded_headers = ['content-encoding', 'transfer-encoding', 'content-length']
+        resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded_headers}
+        return Response(resp.content, status=resp.status_code, headers=resp_headers)
+    except req.exceptions.ConnectionError:
+        return '<html><body style="background:#0d1117;color:#8b949e;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2 style="color:#58a6ff">Starting up...</h2><p>Your app is still launching. Please wait a few seconds and refresh.</p></div></body></html>', 503
+    except Exception as e:
+        return f'<html><body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Error</h2><p>{str(e)}</p></div></body></html>', 503
 
 
 @app.route('/api/health', methods=['GET'])

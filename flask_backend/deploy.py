@@ -32,19 +32,32 @@ def detect_run_command(project_path, language):
     """Auto-detect the run command for a project."""
     files = os.listdir(project_path) if os.path.isdir(project_path) else []
 
+    # Check if requirements.txt exists and needs installing
+    needs_install = 'requirements.txt' in files
+    install_prefix = 'pip install -q -r requirements.txt && ' if needs_install else ''
+
     if language == 'python' or any(f.endswith('.py') for f in files):
-        # Check for common entry points
-        if 'app.py' in files:
-            return 'python3 app.py'
-        if 'main.py' in files:
-            return 'python3 main.py'
-        if 'manage.py' in files:
-            return 'python3 manage.py runserver 0.0.0.0:{port}'
-        if 'requirements.txt' in files:
-            return 'pip install -r requirements.txt && python3 app.py'
+        # Check for Streamlit apps (check file contents for streamlit import)
         for f in files:
             if f.endswith('.py'):
-                return f'python3 {f}'
+                try:
+                    with open(os.path.join(project_path, f), 'r') as fh:
+                        content = fh.read()
+                        if 'import streamlit' in content or 'from streamlit' in content:
+                            return f'{install_prefix}streamlit run {f} --server.port {{port}} --server.address 0.0.0.0 --server.headless true'
+                except Exception:
+                    pass
+
+        # Check for Flask/Django/FastAPI apps
+        if 'app.py' in files:
+            return f'{install_prefix}python3 app.py'
+        if 'main.py' in files:
+            return f'{install_prefix}python3 main.py'
+        if 'manage.py' in files:
+            return f'{install_prefix}python3 manage.py runserver 0.0.0.0:{{port}}'
+        for f in files:
+            if f.endswith('.py'):
+                return f'{install_prefix}python3 {f}'
 
     if language == 'javascript' or 'package.json' in files:
         if 'package.json' in files:
@@ -214,3 +227,92 @@ def deployment_status(user, project_id):
         'url': deployment['deploy_url'],
         'pid': deployment['deploy_pid'],
     })
+
+
+@deploy_bp.route('/api/deployments', methods=['GET'])
+@login_required
+def list_deployments(user):
+    """List all deployments for the current user."""
+    conn = get_db()
+    deployments = conn.execute(
+        '''SELECT d.*, p.name as project_name, p.language as project_language
+           FROM deployments d
+           JOIN projects p ON d.project_id = p.id
+           WHERE d.user_id = ?
+           ORDER BY d.created_at DESC''',
+        (user['id'],)
+    ).fetchall()
+    conn.close()
+
+    result = []
+    for dep in deployments:
+        d = dict(dep)
+        # Check if running process is actually alive
+        if d['status'] == 'running' and d['deploy_pid']:
+            try:
+                os.kill(d['deploy_pid'], 0)
+            except ProcessLookupError:
+                d['status'] = 'crashed'
+                conn2 = get_db()
+                conn2.execute('UPDATE deployments SET status = ? WHERE id = ?', ('crashed', d['id']))
+                conn2.commit()
+                conn2.close()
+        result.append(d)
+
+    return jsonify(result)
+
+
+@deploy_bp.route('/api/deploy/<int:deploy_id>/delete', methods=['DELETE'])
+@login_required
+def delete_deployment(user, deploy_id):
+    """Delete a deployment record (and stop it if running)."""
+    conn = get_db()
+    deployment = conn.execute(
+        'SELECT * FROM deployments WHERE id = ? AND user_id = ?',
+        (deploy_id, user['id'])
+    ).fetchone()
+
+    if not deployment:
+        conn.close()
+        return jsonify({'error': 'Deployment not found'}), 404
+
+    # Stop if running
+    if deployment['status'] == 'running' and deployment['deploy_pid']:
+        try:
+            os.killpg(os.getpgid(deployment['deploy_pid']), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+    conn.execute('DELETE FROM deployments WHERE id = ?', (deploy_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'status': 'deleted', 'message': 'Deployment removed'})
+
+
+@deploy_bp.route('/api/deploy/<int:project_id>/restart', methods=['POST'])
+@login_required
+def restart_deployment(user, project_id):
+    """Restart a deployment by stopping and re-deploying."""
+    # Stop existing
+    conn = get_db()
+    existing = conn.execute(
+        'SELECT * FROM deployments WHERE project_id = ? AND user_id = ? AND status = ?',
+        (project_id, user['id'], 'running')
+    ).fetchone()
+
+    if existing and existing['deploy_pid']:
+        try:
+            os.killpg(os.getpgid(existing['deploy_pid']), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        conn.execute(
+            'UPDATE deployments SET status = ? WHERE id = ?',
+            ('stopped', existing['id'])
+        )
+        conn.commit()
+
+    conn.close()
+
+    # Re-deploy by calling the deploy function logic
+    return deploy_project(user, project_id)

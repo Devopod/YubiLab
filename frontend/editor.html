@@ -71,6 +71,7 @@
                         <button class="bottom-tab active" data-panel="terminal" onclick="switchBottomTab('terminal')">Terminal</button>
                         <button class="bottom-tab" data-panel="console" onclick="switchBottomTab('console')">Console</button>
                         <button class="bottom-tab" data-panel="preview" onclick="switchBottomTab('preview')">Preview</button>
+                        <button class="bottom-tab" data-panel="deployments" onclick="switchBottomTab('deployments')">Deployments</button>
                         <div class="bottom-panel-actions">
                             <button onclick="clearConsole()" title="Clear Console">🗑</button>
                             <button onclick="toggleBottomPanel()" title="Toggle Panel">—</button>
@@ -85,6 +86,9 @@
                         </div>
                         <div class="panel-pane" id="preview-pane">
                             <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
+                        </div>
+                        <div class="panel-pane" id="deployments-pane">
+                            <div id="deployments-list" style="padding:12px;overflow-y:auto;height:100%;font-size:0.85rem;"></div>
                         </div>
                     </div>
                 </div>

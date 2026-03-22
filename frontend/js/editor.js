@@ -833,6 +833,9 @@ function switchBottomTab(panel) {
     if (panel === 'preview') {
         updatePreview();
     }
+    if (panel === 'deployments') {
+        loadDeployments();
+    }
 }
 
 function toggleBottomPanel() {
@@ -1130,6 +1133,9 @@ async function deployProject() {
                 frame.src = `${API_BASE}${data.url}?t=${Date.now()}`;
                 switchBottomTab('preview');
             }, 2000);
+
+            // Also refresh deployments panel
+            loadDeployments();
         } else {
             showToast(data.error || 'Deploy failed', 'error');
             setStatus('Deploy failed');
@@ -1140,9 +1146,10 @@ async function deployProject() {
     }
 }
 
-async function stopDeployment() {
+async function stopDeployment(pid) {
+    const targetId = pid || projectId;
     try {
-        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+        const res = await fetch(`${API_BASE}/api/deploy/${targetId}`, {
             method: 'DELETE',
             credentials: 'include',
         });
@@ -1150,8 +1157,130 @@ async function stopDeployment() {
         if (res.ok) {
             showToast('Deployment stopped', 'success');
             setStatus('Ready');
+            loadDeployments();
         } else {
             showToast(data.error || 'Failed to stop', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function loadDeployments() {
+    const container = document.getElementById('deployments-list');
+    if (!container) return;
+    container.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Loading deployments...</div>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/deployments`, { credentials: 'include' });
+        const deployments = await res.json();
+
+        if (!deployments.length) {
+            container.innerHTML = `
+                <div style="text-align:center;padding:30px;color:var(--text-muted);">
+                    <div style="font-size:2rem;margin-bottom:8px;">🚀</div>
+                    <p>No deployments yet</p>
+                    <p style="font-size:0.8rem;">Click the Deploy button to deploy your project</p>
+                </div>`;
+            return;
+        }
+
+        let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+        for (const dep of deployments) {
+            const statusColor = dep.status === 'running' ? '#3fb950' : dep.status === 'crashed' ? '#f85149' : '#8b949e';
+            const statusIcon = dep.status === 'running' ? '🟢' : dep.status === 'crashed' ? '🔴' : '⚪';
+            const previewUrl = `${API_BASE}/preview-app/${dep.project_id}`;
+            const createdAt = dep.created_at ? new Date(dep.created_at).toLocaleString() : '';
+
+            html += `
+            <div style="background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:8px;padding:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span>${statusIcon}</span>
+                        <strong style="color:var(--text-primary);">${escapeHtml(dep.project_name || 'Project #' + dep.project_id)}</strong>
+                        <span style="background:color-mix(in srgb, ${statusColor} 20%, transparent);color:${statusColor};padding:2px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;">${dep.status}</span>
+                    </div>
+                    <span style="color:var(--text-muted);font-size:0.75rem;">${createdAt}</span>
+                </div>
+                <div style="display:flex;gap:12px;font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;">
+                    <span>Port: <strong>${dep.deploy_port}</strong></span>
+                    <span>PID: <strong>${dep.deploy_pid || '-'}</strong></span>
+                    ${dep.project_language ? `<span>Stack: <strong>${dep.project_language}</strong></span>` : ''}
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    ${dep.status === 'running' ? `
+                        <button onclick="window.open('${previewUrl}','_blank')" class="btn btn-sm" style="background:var(--accent-blue);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">🌐 Open</button>
+                        <button onclick="restartDeployment(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-purple);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">🔄 Restart</button>
+                        <button onclick="stopDeployment(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-orange);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">⏹ Stop</button>
+                    ` : `
+                        <button onclick="redeployProject(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-green);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">🚀 Redeploy</button>
+                    `}
+                    <button onclick="deleteDeployment(${dep.id})" class="btn btn-sm" style="background:var(--danger);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">🗑 Delete</button>
+                </div>
+            </div>`;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = `<div style="color:var(--danger);padding:20px;text-align:center;">Failed to load deployments: ${e.message}</div>`;
+    }
+}
+
+async function restartDeployment(projId) {
+    showToast('Restarting deployment...', 'info');
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projId}/restart`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`Restarted on port ${data.port}!`, 'success');
+            loadDeployments();
+        } else {
+            showToast(data.error || 'Restart failed', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function redeployProject(projId) {
+    showToast('Deploying...', 'info');
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`Deployed on port ${data.port}!`, 'success');
+            loadDeployments();
+        } else {
+            showToast(data.error || 'Deploy failed', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function deleteDeployment(deployId) {
+    if (!confirm('Delete this deployment record?')) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${deployId}/delete`, {
+            method: 'DELETE',
+            credentials: 'include',
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Deployment deleted', 'success');
+            loadDeployments();
+        } else {
+            showToast(data.error || 'Delete failed', 'error');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
