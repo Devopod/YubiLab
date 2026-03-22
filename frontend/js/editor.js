@@ -3,7 +3,9 @@
 // ============================================
 
 const API_BASE = window.location.origin;
-const NODE_ENGINE_URL = window.location.origin;
+// Socket.IO connects through same origin when behind reverse proxy (nginx/proxy on 8080/8888)
+// Falls back to port 3001 when accessed directly on port 5000
+const NODE_ENGINE_URL = (window.location.port === '5000') ? window.location.protocol + '//' + window.location.hostname + ':3001' : window.location.origin;
 
 // State
 let projectId = null;
