@@ -3,7 +3,7 @@
 // ============================================
 
 const API_BASE = window.location.origin;
-const NODE_ENGINE_URL = window.location.protocol + '//' + window.location.hostname + ':3001';
+const NODE_ENGINE_URL = window.location.origin;
 
 // State
 let projectId = null;
