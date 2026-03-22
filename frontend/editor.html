@@ -25,7 +25,7 @@
                 <button class="btn btn-ghost btn-sm" onclick="saveCurrentFile()" title="Save (Ctrl+S)">💾 Save</button>
                 <button class="btn btn-ghost btn-sm" onclick="togglePreview()" title="HTML Preview" id="preview-btn" style="display:none">🌐 Preview</button>
                 <button class="btn btn-ghost btn-sm" onclick="toggleAI()" title="YubiAI Assistant" style="background: linear-gradient(135deg, rgba(188,140,255,0.15), rgba(88,166,255,0.15)); border-color: var(--accent-purple);">🤖 AI</button>
-                <button class="btn btn-ghost btn-sm" onclick="deployProject()" title="Deploy Project">🚀 Deploy</button>
+                <button class="btn btn-primary btn-sm" onclick="deployProject()" title="Deploy Project" style="background: linear-gradient(135deg, var(--accent-green), #2ea44f);">🚀 Deploy</button>
             </div>
         </div>
 
@@ -108,6 +108,7 @@
                         <button class="ai-action-btn" data-action="debug" onclick="setAIAction('debug')">Debug</button>
                         <button class="ai-action-btn" data-action="explain" onclick="setAIAction('explain')">Explain</button>
                         <button class="ai-action-btn" data-action="agent" onclick="setAIAction('agent')">🤖 Agent</button>
+                        <button class="ai-action-btn" style="margin-left:auto;font-size:0.7rem;opacity:0.6" onclick="clearAIChat()" title="Clear chat">🗑</button>
                     </div>
                     <div class="ai-input-row">
                         <textarea id="ai-input" placeholder="Ask YubiAI..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIMessage();}"></textarea>

@@ -30,7 +30,9 @@ function setupTerminal(socket) {
                     TERM: 'xterm-256color',
                     COLORTERM: 'truecolor',
                     HOME: os.homedir(),
-                    PATH: process.env.PATH
+                    PATH: process.env.PATH,
+                    PORT: '3000',
+                    FLASK_RUN_PORT: '3000',
                 }
             });
 

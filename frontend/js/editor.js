@@ -70,6 +70,9 @@ const FILE_ICONS = {
     // Initialize Terminal
     initTerminal();
 
+    // Load saved AI conversations
+    loadConversations();
+
     // Setup keyboard shortcuts
     setupShortcuts();
 
@@ -97,6 +100,10 @@ async function loadProject() {
         if (projectData.language === 'html') {
             document.getElementById('preview-btn').style.display = '';
         }
+
+        // Show deploy button for all projects
+        const deployBtn = document.querySelector('[onclick="deployProject()"]');
+        if (deployBtn) deployBtn.style.display = '';
 
         await refreshFiles();
     } catch (e) {
@@ -861,6 +868,40 @@ function setAIAction(action) {
     document.getElementById('ai-input').placeholder = placeholder[action] || 'Ask YubiAI...';
 }
 
+async function loadConversations() {
+    try {
+        const res = await fetch(`${API_BASE}/api/ai/conversations/${projectId}`, { credentials: 'include' });
+        if (!res.ok) return;
+        const messages = await res.json();
+        const messagesDiv = document.getElementById('ai-messages');
+        messages.forEach(m => {
+            const el = document.createElement('div');
+            el.className = `ai-message ${m.role}`;
+            if (m.msg_type === 'agent-result') {
+                el.className += ' agent-result';
+                el.innerHTML = m.content;
+            } else {
+                el.textContent = m.content;
+            }
+            messagesDiv.appendChild(el);
+        });
+        if (messages.length > 0) {
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+    } catch (e) {
+        console.warn('Could not load conversations:', e);
+    }
+}
+
+function saveConversation(role, content, msgType) {
+    fetch(`${API_BASE}/api/ai/conversations/${projectId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ role, content, msg_type: msgType || 'text' }),
+    }).catch(() => {});
+}
+
 async function sendAIMessage() {
     const input = document.getElementById('ai-input');
     const prompt = input.value.trim();
@@ -868,6 +909,7 @@ async function sendAIMessage() {
 
     // Add user message
     addAIMessage(prompt, 'user');
+    saveConversation('user', prompt);
     input.value = '';
 
     // Get code context
@@ -949,11 +991,15 @@ async function sendAIMessage() {
             document.getElementById('ai-messages').appendChild(resultEl);
             document.getElementById('ai-messages').scrollTop = document.getElementById('ai-messages').scrollHeight;
 
+            // Save agent result to conversations
+            saveConversation('assistant', resultEl.innerHTML, 'agent-result');
+
             // Refresh file tree
             await refreshFiles();
             showToast('Agent completed! Files created.', 'success');
         } else if (data.response) {
             addAIMessage(data.response, 'assistant');
+            saveConversation('assistant', data.response);
 
             // If generating code, offer to insert it
             if (aiAction === 'generate' || aiAction === 'debug' || aiAction === 'complete') {
@@ -975,10 +1021,12 @@ async function sendAIMessage() {
             }
         } else if (data.error) {
             addAIMessage(`Error: ${data.error}`, 'system error');
+            saveConversation('system', `Error: ${data.error}`);
         }
     } catch (e) {
         progressEl.remove();
         addAIMessage(`Error: ${e.message}`, 'system error');
+        saveConversation('system', `Error: ${e.message}`);
     }
 }
 
@@ -1012,6 +1060,15 @@ function updateAgentStep(el, step) {
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
+async function clearAIChat() {
+    if (!confirm('Clear all AI conversation history for this project?')) return;
+    document.getElementById('ai-messages').innerHTML = '<div class="ai-message system">YubiAI is ready. Ask me to generate code, debug, explain, or build your entire project!</div>';
+    try {
+        await fetch(`${API_BASE}/api/ai/conversations/${projectId}`, { method: 'DELETE', credentials: 'include' });
+        showToast('Chat cleared', 'success');
+    } catch (e) {}
+}
+
 function addAIMessage(text, type) {
     const messagesDiv = document.getElementById('ai-messages');
     const msg = document.createElement('div');
@@ -1029,13 +1086,76 @@ function addAIMessage(text, type) {
 async function deployProject() {
     if (!projectData) return;
 
-    if (projectData.language !== 'html') {
-        showToast('Deploy is currently available for HTML projects', 'info');
+    // Save all open files first
+    for (let i = 0; i < openTabs.length; i++) {
+        if (openTabs[i].modified) await saveFile(i);
+    }
+
+    // For HTML projects, just show preview
+    if (projectData.language === 'html') {
+        showToast('Opening preview...', 'info');
+        showPreview();
         return;
     }
 
-    showToast('Opening preview...', 'info');
-    showPreview();
+    // For all other projects, use deploy API
+    showToast('Deploying project...', 'info');
+    setStatus('Deploying...');
+
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            showToast(`Deployed on port ${data.port}!`, 'success');
+            setStatus(`Deployed (port ${data.port})`);
+
+            // Show deploy info in console
+            clearConsole();
+            switchBottomTab('console');
+            appendConsole(`=== Project Deployed ===\n`, 'success');
+            appendConsole(`Port: ${data.port}\n`, 'info');
+            appendConsole(`Command: ${data.command}\n`, 'info');
+            appendConsole(`URL: ${window.location.origin}${data.url}\n`, 'info');
+            appendConsole(`\nOpening preview...\n`, 'info');
+
+            // Wait a bit for the server to start, then show preview
+            setTimeout(() => {
+                const frame = document.getElementById('preview-frame');
+                frame.src = `${API_BASE}${data.url}?t=${Date.now()}`;
+                switchBottomTab('preview');
+            }, 2000);
+        } else {
+            showToast(data.error || 'Deploy failed', 'error');
+            setStatus('Deploy failed');
+        }
+    } catch (e) {
+        showToast('Deploy error: ' + e.message, 'error');
+        setStatus('Error');
+    }
+}
+
+async function stopDeployment() {
+    try {
+        const res = await fetch(`${API_BASE}/api/deploy/${projectId}`, {
+            method: 'DELETE',
+            credentials: 'include',
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Deployment stopped', 'success');
+            setStatus('Ready');
+        } else {
+            showToast(data.error || 'Failed to stop', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
 }
 
 // ============================================

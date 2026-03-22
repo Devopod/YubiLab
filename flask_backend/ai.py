@@ -62,6 +62,55 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
         return {"error": f"YubiAI API error: {str(e)}"}
 
 
+@ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['GET'])
+@login_required
+def get_conversations(user, project_id):
+    """Load saved AI conversations for a project."""
+    conn = get_db()
+    messages = conn.execute(
+        'SELECT role, content, msg_type, created_at FROM ai_conversations WHERE project_id = ? AND user_id = ? ORDER BY created_at ASC',
+        (project_id, user['id'])
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(m) for m in messages])
+
+
+@ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['POST'])
+@login_required
+def save_conversation(user, project_id):
+    """Save an AI conversation message."""
+    data = request.get_json()
+    role = data.get('role', '')
+    content = data.get('content', '')
+    msg_type = data.get('msg_type', 'text')
+
+    if not role or not content:
+        return jsonify({'error': 'role and content required'}), 400
+
+    conn = get_db()
+    conn.execute(
+        'INSERT INTO ai_conversations (project_id, user_id, role, content, msg_type) VALUES (?, ?, ?, ?, ?)',
+        (project_id, user['id'], role, content, msg_type)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'saved'})
+
+
+@ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['DELETE'])
+@login_required
+def clear_conversations(user, project_id):
+    """Clear AI conversations for a project."""
+    conn = get_db()
+    conn.execute(
+        'DELETE FROM ai_conversations WHERE project_id = ? AND user_id = ?',
+        (project_id, user['id'])
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'cleared'})
+
+
 @ai_bp.route('/api/ai/generate', methods=['POST'])
 @login_required
 def ai_generate(user):

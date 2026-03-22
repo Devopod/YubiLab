@@ -11,6 +11,7 @@ from projects import projects_bp
 from files import files_bp
 from ai import ai_bp
 from keys import keys_bp
+from deploy import deploy_bp
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 app.secret_key = SECRET_KEY
@@ -26,6 +27,7 @@ app.register_blueprint(projects_bp)
 app.register_blueprint(files_bp)
 app.register_blueprint(ai_bp)
 app.register_blueprint(keys_bp)
+app.register_blueprint(deploy_bp)
 
 # Initialize database
 init_db()
@@ -133,6 +135,38 @@ def get_workspace_path(project_id):
     os.makedirs(project_path, exist_ok=True)
 
     return jsonify({'path': project_path})
+
+
+# Proxy for deployed user apps
+@app.route('/preview-app/<int:project_id>', defaults={'path': ''})
+@app.route('/preview-app/<int:project_id>/<path:path>')
+def preview_app(project_id, path):
+    from auth import get_current_user
+    import requests as req
+
+    user = get_current_user()
+    if not user:
+        return "Unauthorized", 401
+
+    conn = get_db()
+    deployment = conn.execute(
+        'SELECT * FROM deployments WHERE project_id = ? AND user_id = ? AND status = ?',
+        (project_id, user['id'], 'running')
+    ).fetchone()
+    conn.close()
+
+    if not deployment:
+        return "No running deployment", 404
+
+    port = deployment['deploy_port']
+    target_url = f'http://127.0.0.1:{port}/{path}'
+
+    try:
+        resp = req.get(target_url, timeout=5)
+        from flask import Response
+        return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type', 'text/html'))
+    except Exception:
+        return "App not responding yet. It may still be starting up.", 503
 
 
 @app.route('/api/health', methods=['GET'])
