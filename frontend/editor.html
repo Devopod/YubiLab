@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YubiLab - Editor</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Monaco Editor -->
+    <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/editor/editor.main.css">
+    <!-- xterm.js -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+</head>
+<body>
+    <div class="editor-container">
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <button class="back-btn" onclick="goBack()" title="Back to Dashboard">◀</button>
+                <span class="project-name" id="project-name">Project</span>
+                <span class="project-lang-badge" id="project-lang-badge">python</span>
+            </div>
+            <div class="editor-header-right">
+                <button class="btn btn-success btn-sm" onclick="runCode()" title="Run Code (Ctrl+Enter)">▶ Run</button>
+                <button class="btn btn-ghost btn-sm" onclick="saveCurrentFile()" title="Save (Ctrl+S)">💾 Save</button>
+                <button class="btn btn-ghost btn-sm" onclick="togglePreview()" title="HTML Preview" id="preview-btn" style="display:none">🌐 Preview</button>
+                <button class="btn btn-ghost btn-sm" onclick="toggleAI()" title="YubiAI Assistant" style="background: linear-gradient(135deg, rgba(188,140,255,0.15), rgba(88,166,255,0.15)); border-color: var(--accent-purple);">🤖 AI</button>
+                <button class="btn btn-ghost btn-sm" onclick="deployProject()" title="Deploy Project">🚀 Deploy</button>
+            </div>
+        </div>
+
+        <div class="editor-body">
+            <!-- File Explorer -->
+            <div class="file-explorer">
+                <div class="file-explorer-header">
+                    <span>Explorer</span>
+                    <div class="file-explorer-actions">
+                        <button onclick="createNewFile()" title="New File">📄+</button>
+                        <button onclick="createNewFolder()" title="New Folder">📁+</button>
+                        <button onclick="refreshFiles()" title="Refresh">🔄</button>
+                    </div>
+                </div>
+                <div class="file-tree" id="file-tree">
+                    <!-- File tree rendered dynamically -->
+                </div>
+            </div>
+
+            <!-- Main Area -->
+            <div class="editor-main">
+                <!-- Editor Tabs -->
+                <div class="editor-tabs" id="editor-tabs">
+                    <!-- Tabs rendered dynamically -->
+                </div>
+
+                <!-- Monaco Editor -->
+                <div class="editor-pane" id="editor-pane">
+                    <div class="editor-empty-state" id="editor-empty">
+                        <div class="icon">📝</div>
+                        <p>Select a file to start editing</p>
+                        <p class="shortcut">Ctrl+S to save • Ctrl+Enter to run</p>
+                    </div>
+                    <div id="monaco-editor" style="display:none;"></div>
+                </div>
+
+                <!-- Resize Handle -->
+                <div class="resize-handle" id="resize-handle"></div>
+
+                <!-- Bottom Panel -->
+                <div class="bottom-panel" id="bottom-panel">
+                    <div class="bottom-panel-tabs">
+                        <button class="bottom-tab active" data-panel="terminal" onclick="switchBottomTab('terminal')">Terminal</button>
+                        <button class="bottom-tab" data-panel="console" onclick="switchBottomTab('console')">Console</button>
+                        <button class="bottom-tab" data-panel="preview" onclick="switchBottomTab('preview')">Preview</button>
+                        <div class="bottom-panel-actions">
+                            <button onclick="clearConsole()" title="Clear Console">🗑</button>
+                            <button onclick="toggleBottomPanel()" title="Toggle Panel">—</button>
+                        </div>
+                    </div>
+                    <div class="bottom-panel-content">
+                        <div class="panel-pane active" id="terminal-pane">
+                            <div id="terminal-container"></div>
+                        </div>
+                        <div class="panel-pane" id="console-pane">
+                            <div id="console-output"></div>
+                        </div>
+                        <div class="panel-pane" id="preview-pane">
+                            <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Panel -->
+            <div class="ai-panel" id="ai-panel">
+                <div class="ai-panel-header">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span>YubiAI</span>
+                        <span class="ai-badge">⚡ GPT-OSS</span>
+                    </div>
+                    <button class="ai-close" onclick="toggleAI()">✕</button>
+                </div>
+                <div class="ai-messages" id="ai-messages">
+                    <div class="ai-message system">YubiAI is ready. Ask me to generate code, debug, explain, or build your entire project!</div>
+                </div>
+                <div class="ai-input-area">
+                    <div class="ai-action-buttons">
+                        <button class="ai-action-btn active" data-action="generate" onclick="setAIAction('generate')">Generate</button>
+                        <button class="ai-action-btn" data-action="debug" onclick="setAIAction('debug')">Debug</button>
+                        <button class="ai-action-btn" data-action="explain" onclick="setAIAction('explain')">Explain</button>
+                        <button class="ai-action-btn" data-action="agent" onclick="setAIAction('agent')">🤖 Agent</button>
+                    </div>
+                    <div class="ai-input-row">
+                        <textarea id="ai-input" placeholder="Ask YubiAI..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIMessage();}"></textarea>
+                        <button class="ai-send-btn" onclick="sendAIMessage()">➤</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-bar-left">
+                <span id="status-text">Ready</span>
+                <span id="status-file"></span>
+            </div>
+            <div class="status-bar-right">
+                <span id="status-lang">-</span>
+                <span id="status-pos">Ln 1, Col 1</span>
+                <span>YubiLab IDE</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Dialog -->
+    <div class="input-dialog" id="input-dialog">
+        <div class="input-dialog-box">
+            <h4 id="dialog-title">Input</h4>
+            <input type="text" id="dialog-input" placeholder="">
+            <div class="input-dialog-actions">
+                <button class="btn btn-ghost btn-sm" onclick="cancelDialog()">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="confirmDialog()">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="file-item-context" id="context-menu" style="display:none;">
+        <div class="context-item" onclick="contextAction('rename')">Rename</div>
+        <div class="context-item" onclick="contextAction('newfile')">New File Here</div>
+        <div class="context-item" onclick="contextAction('newfolder')">New Folder Here</div>
+        <div class="context-item danger" onclick="contextAction('delete')">Delete</div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+
+    <!-- Monaco Editor Loader -->
+    <script>
+        var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }};
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/editor/editor.main.nls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/editor/editor.main.js"></script>
+
+    <!-- App Scripts -->
+    <script src="/js/editor.js"></script>
+</body>
+</html>

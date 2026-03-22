@@ -30,3 +30,7 @@ Thumbs.db
 
 # Test files
 test-plan.md
+
+# YubiLab
+user_workspaces/
+flask_backend/yubilab.db
