@@ -63,7 +63,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
     )
 
     application.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
-    application.config['WTF_CSRF_ENABLED'] = os.environ.get('WTF_CSRF_ENABLED', 'false').lower() == 'true'
+    application.config['WTF_CSRF_ENABLED'] = False
     application.config['DEBUG'] = os.environ.get('FLASK_DEBUG', '0') == '1'
 
     if config:
@@ -74,9 +74,6 @@ def create_app(config: Optional[dict] = None) -> Flask:
         level=getattr(logging, log_level, logging.INFO),
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     )
-
-    from flask_wtf.csrf import CSRFProtect
-    CSRFProtect(application)
 
     @application.after_request
     def set_security_headers(response):
@@ -210,7 +207,6 @@ def index() -> str:
     <div class="calculator">
         <h2>Flask Calculator</h2>
         <form method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="expression" placeholder="Enter Expression" value="{{ expression }}" class="display" readonly>
             <div class="buttons">
                 <button type="button" onclick="appendChar('7')">7</button>
