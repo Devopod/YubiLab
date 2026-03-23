@@ -276,25 +276,43 @@ def ai_generate(user):
     code_context = data.get('code_context', '')
     language = data.get('language', 'python')
     action = data.get('action', 'generate')  # generate, debug, explain, complete
+    project_id = data.get('project_id')
 
     if not prompt:
         return jsonify({'error': 'Prompt is required'}), 400
 
+    # Always read full project source code for context
+    project_files_context = ''
+    if project_id:
+        conn = get_db()
+        project = conn.execute(
+            'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+            (project_id, user['id'])
+        ).fetchone()
+        conn.close()
+        if project:
+            project_path = get_project_path(user['id'], project['name'])
+            project_files_context, _ = get_project_files_context(project_path)
+
     system_prompts = {
-        'generate': f"You are YubiAI, an expert coding assistant built into YubiLab IDE. Generate clean, well-commented {language} code based on the user's request. Return ONLY the code without markdown code blocks unless the user asks for explanation.",
-        'debug': f"You are YubiAI, a debugging expert in YubiLab IDE. Analyze the following {language} code and identify bugs, then provide the fixed version. Explain what was wrong briefly.",
-        'explain': f"You are YubiAI, a code explanation assistant in YubiLab IDE. Explain the following {language} code in a clear, concise manner.",
-        'complete': f"You are YubiAI, an autocomplete assistant in YubiLab IDE. Complete the following {language} code naturally. Return ONLY the completed code.",
+        'generate': f"You are YubiAI, an expert coding assistant built into YubiLab IDE. You have access to the full project source code. Generate clean, well-commented {language} code based on the user's request. Return ONLY the code without markdown code blocks unless the user asks for explanation.",
+        'debug': f"You are YubiAI, a debugging expert in YubiLab IDE. You have access to the full project source code. Analyze the following {language} code and identify bugs, then provide the fixed version. Explain what was wrong briefly.",
+        'explain': f"You are YubiAI, a code explanation assistant in YubiLab IDE. You have access to the full project source code. Explain the code thoroughly — describe its structure, purpose, and how the individual pieces work together.",
+        'complete': f"You are YubiAI, an autocomplete assistant in YubiLab IDE. You have access to the full project source code. Complete the following {language} code naturally. Return ONLY the completed code.",
     }
 
     system_prompt = system_prompts.get(action, system_prompts['generate'])
 
+    # Build full prompt with project source code
+    parts = []
+    if project_files_context:
+        parts.append(f"Full project source code:\n{project_files_context}")
     if code_context:
-        full_prompt = f"Code context:\n```{language}\n{code_context}\n```\n\nUser request: {prompt}"
-    else:
-        full_prompt = prompt
+        parts.append(f"Currently open file in editor:\n```{language}\n{code_context}\n```")
+    parts.append(f"User request: {prompt}")
+    full_prompt = '\n\n'.join(parts)
 
-    result = call_yubiai(full_prompt, system_prompt=system_prompt)
+    result = call_yubiai(full_prompt, system_prompt=system_prompt, max_tokens=32768)
 
     if 'error' in result:
         return jsonify({'error': result['error'], 'action': action}), 500

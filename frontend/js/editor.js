@@ -945,6 +945,7 @@ async function sendAIMessage() {
                 code_context: codeContext,
                 language: projectData.language,
                 action: aiAction,
+                project_id: projectId,
             };
         }
 

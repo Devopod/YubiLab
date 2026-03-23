@@ -1628,7 +1628,8 @@ async function sendMessage() {
     showTyping();
 
     try {
-        const res = await fetch('/api/chat', {
+        const baseUrl = window.location.pathname.replace(/\/$/, '');
+        const res = await fetch(baseUrl + '/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message }),
@@ -1659,7 +1660,8 @@ async function sendMessage() {
 }
 
 async function clearChat() {
-    try { await fetch('/api/clear', { method: 'POST' }); } catch(e) {}
+    const baseUrl = window.location.pathname.replace(/\/$/, '');
+    try { await fetch(baseUrl + '/api/clear', { method: 'POST' }); } catch(e) {}
     messagesContainer.innerHTML = `
         <div class="welcome-message">
             <div class="welcome-avatar">IL</div>
