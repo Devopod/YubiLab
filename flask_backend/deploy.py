@@ -49,9 +49,12 @@ def detect_run_command(project_path, language):
                 except Exception:
                     pass
 
-        # Check for Flask/Django/FastAPI apps - use gunicorn or direct python with debug off
+        # Check for run.py first (common entry point for refactored Flask apps)
+        if 'run.py' in files:
+            return f'{install_prefix}python3 run.py'
+        # Check for Flask/Django/FastAPI apps
         if 'app.py' in files:
-            return f'{install_prefix}python3 -c "import app; app.app.run(host=\\"0.0.0.0\\", port={{port}}, debug=False)"'
+            return f'{install_prefix}python3 app.py'
         if 'main.py' in files:
             return f'{install_prefix}python3 main.py'
         if 'manage.py' in files:

@@ -172,11 +172,14 @@ def preview_app(project_id, path):
         for key in ['Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'Referer']:
             if key in request.headers:
                 headers[key] = request.headers[key]
+        # Tell the deployed app we're behind a proxy (disables HTTPS redirects in Talisman etc.)
+        headers['X-Forwarded-Proto'] = 'https'
+        headers['X-Forwarded-For'] = request.remote_addr or '127.0.0.1'
 
         if request.method == 'POST':
-            resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=15)
+            resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=15, allow_redirects=True, verify=False)
         else:
-            resp = req.get(target_url, headers=headers, timeout=15)
+            resp = req.get(target_url, headers=headers, timeout=15, allow_redirects=True, verify=False)
 
         from flask import Response
         excluded_headers = ['content-encoding', 'transfer-encoding', 'content-length']
