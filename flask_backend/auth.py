@@ -166,7 +166,6 @@ def delete_account():
         conn.execute('DELETE FROM deployments WHERE user_id = ?', (user_id,))
         conn.execute('DELETE FROM ai_conversations WHERE user_id = ?', (user_id,))
         conn.execute('DELETE FROM api_keys WHERE user_id = ?', (user_id,))
-        conn.execute('DELETE FROM files WHERE project_id IN (SELECT id FROM projects WHERE user_id = ?)', (user_id,))
         conn.execute('DELETE FROM projects WHERE user_id = ?', (user_id,))
         conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
         conn.commit()
