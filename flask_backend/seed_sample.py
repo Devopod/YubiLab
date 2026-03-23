@@ -257,35 +257,67 @@ def index() -> str:
 </body>
 </html>
 ''',
-    'static/style.css': '''body {
+    'static/style.css': '''* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
     display: flex;
     justify-content: center;
     align-items: center;
-    height: 100vh;
+    min-height: 100vh;
     margin: 0;
-    font-family: Arial, sans-serif;
-    background: #f4f4f4;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+    -webkit-font-smoothing: antialiased;
 }
 
 .calculator {
-    background: #fff;
-    padding: 20px 25px;
-    border-radius: 10px;
-    box-shadow: 0 0 15px rgba(0,0,0,0.2);
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(20px);
+    padding: 28px;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(88, 166, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     text-align: center;
-    width: 300px;
+    width: 340px;
+    max-width: 95vw;
+    animation: slideUp 0.5s ease-out;
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.calculator h2 {
+    color: #fff;
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, #58a6ff, #bc8cff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .display {
     width: 100%;
-    height: 40px;
-    font-size: 18px;
-    margin-bottom: 15px;
+    height: 50px;
+    font-size: 20px;
+    margin-bottom: 16px;
     text-align: right;
-    padding-right: 10px;
-    border-radius: 5px;
-    border: 1px solid #ccc;
-    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.3);
+    color: #e6edf3;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.display:focus {
+    border-color: #58a6ff;
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
 }
 
 .buttons {
@@ -295,38 +327,85 @@ def index() -> str:
 }
 
 button {
-    padding: 15px;
+    padding: 16px;
     font-size: 18px;
+    font-weight: 600;
     border: none;
-    border-radius: 5px;
-    background: #007bff;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #58a6ff, #4c9aed);
     color: white;
     cursor: pointer;
-    transition: 0.2s;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(88, 166, 255, 0.2);
 }
 
 button:hover {
-    background: #0056b3;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(88, 166, 255, 0.35);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+button[onclick*="/"], button[onclick*="*"] {
+    background: linear-gradient(135deg, #bc8cff, #a370e8);
+    box-shadow: 0 4px 12px rgba(188, 140, 255, 0.2);
+}
+
+button[onclick*="+"], button[onclick*="-"] {
+    background: linear-gradient(135deg, #39d2c0, #2bb5a6);
+    box-shadow: 0 4px 12px rgba(57, 210, 192, 0.2);
+}
+
+button[type="submit"] {
+    background: linear-gradient(135deg, #3fb950, #2ea44f);
+    box-shadow: 0 4px 12px rgba(63, 185, 80, 0.3);
+    font-size: 20px;
+}
+
+button[type="submit"]:hover {
+    box-shadow: 0 6px 20px rgba(63, 185, 80, 0.45);
 }
 
 button.clear {
     grid-column: span 4;
-    background: #dc3545;
+    background: linear-gradient(135deg, #f85149, #e04040);
+    box-shadow: 0 4px 12px rgba(248, 81, 73, 0.2);
 }
 
 button.clear:hover {
-    background: #a71d2a;
+    box-shadow: 0 6px 20px rgba(248, 81, 73, 0.4);
 }
 
 .result {
-    margin-top: 15px;
-    font-size: 20px;
-    font-weight: bold;
-    color: #28a745;
+    margin-top: 16px;
+    font-size: 22px;
+    font-weight: 700;
+    color: #3fb950;
+    padding: 12px;
+    border-radius: 10px;
+    background: rgba(63, 185, 80, 0.08);
+    border: 1px solid rgba(63, 185, 80, 0.2);
+    animation: fadeIn 0.3s ease;
 }
 
 .result-error {
-    color: #dc3545;
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.08);
+    border-color: rgba(248, 81, 73, 0.2);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@media (max-width: 400px) {
+    .calculator { padding: 20px 16px; width: 100%; border-radius: 16px; }
+    button { padding: 14px; font-size: 16px; }
+    .display { height: 44px; font-size: 18px; }
+    .calculator h2 { font-size: 1.2rem; }
 }
 ''',
     'tests/__init__.py': '',
