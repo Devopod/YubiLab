@@ -8,38 +8,195 @@ from config import WORKSPACES_DIR
 
 
 CALCULATOR_FILES = {
-    'app.py': '''from flask import Flask, render_template, request
+    'app.py': '''"""Backward-compatible entry point for the Flask Calculator.
+
+This file exists so the deploy system can do:
+    python3 -c "import app; app.app.run(host='0.0.0.0', port=PORT, debug=False)"
+
+For direct execution, use: python run.py
+"""
+
 import os
+from calculator import create_app
 
-app = Flask(__name__)
-
-# Helper function for safe evaluation
-def safe_eval(expr):
-    try:
-        # Only allow digits and operators
-        allowed_chars = "0123456789+-*/(). "
-        if any(c not in allowed_chars for c in expr):
-            return "Invalid Input"
-        return eval(expr)
-    except ZeroDivisionError:
-        return "Division by Zero Error"
-    except Exception:
-        return "Error"
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    result = ""
-    expression = ""
-    if request.method == "POST":
-        expression = request.form.get("expression", "")
-        result = safe_eval(expression)
-    return render_template("index.html", result=result, expression=expression)
+# Create the Flask app instance
+app = create_app()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", 3002)))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    port = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", "3000")))
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=port, debug=debug)
+''',
+    'run.py': '''"""Entry point for the Flask Calculator application."""
+
+import os
+from calculator import create_app
+
+application = create_app()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", "3000")))
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    application.run(host="0.0.0.0", port=port, debug=debug)
 ''',
     'requirements.txt': '''Flask==2.3.3
+Flask-WTF==1.2.1
+pytest==7.4.4
+''',
+    'Procfile': '''web: python run.py
+''',
+    'calculator/__init__.py': '''"""Flask Calculator Application Package."""
+
+import os
+import logging
+from typing import Optional
+
+from flask import Flask
+
+
+def create_app(config: Optional[dict] = None) -> Flask:
+    """Create and configure the Flask application."""
+    application = Flask(
+        __name__,
+        template_folder=os.path.join(os.path.dirname(__file__), '..', 'templates'),
+        static_folder=os.path.join(os.path.dirname(__file__), '..', 'static'),
+    )
+
+    application.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
+    application.config['WTF_CSRF_ENABLED'] = os.environ.get('WTF_CSRF_ENABLED', 'true').lower() == 'true'
+    application.config['DEBUG'] = os.environ.get('FLASK_DEBUG', '0') == '1'
+
+    if config:
+        application.config.update(config)
+
+    log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    )
+
+    from flask_wtf.csrf import CSRFProtect
+    CSRFProtect(application)
+
+    @application.after_request
+    def set_security_headers(response):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';"
+        )
+        return response
+
+    from calculator.routes import calculator_bp
+    application.register_blueprint(calculator_bp)
+
+    return application
+''',
+    'calculator/utils.py': '''"""Safe arithmetic expression evaluator using Python's ast module."""
+
+import ast
+import logging
+import operator
+from typing import Union
+
+logger = logging.getLogger(__name__)
+
+BINARY_OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.Div: operator.truediv,
+    ast.Pow: operator.pow, ast.Mod: operator.mod,
+}
+
+UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+
+class EvalError(Exception):
+    def __init__(self, message: str, error_type: str = "error") -> None:
+        super().__init__(message)
+        self.error_type = error_type
+
+
+def _eval_node(node: ast.AST) -> Union[int, float]:
+    if isinstance(node, ast.Expression):
+        return _eval_node(node.body)
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)):
+            return node.value
+        raise EvalError("Only numeric values are allowed", "invalid_input")
+    if isinstance(node, ast.BinOp):
+        op_type = type(node.op)
+        if op_type not in BINARY_OPS:
+            raise EvalError("Unsupported operator", "unsupported_op")
+        left = _eval_node(node.left)
+        right = _eval_node(node.right)
+        if op_type == ast.Div and right == 0:
+            raise EvalError("Division by Zero Error", "zero_division")
+        if op_type == ast.Mod and right == 0:
+            raise EvalError("Modulo by Zero Error", "zero_division")
+        if op_type == ast.Pow and right > 100:
+            raise EvalError("Exponent too large (max 100)", "overflow")
+        return BINARY_OPS[op_type](left, right)
+    if isinstance(node, ast.UnaryOp):
+        op_type = type(node.op)
+        if op_type not in UNARY_OPS:
+            raise EvalError("Unsupported unary operator", "unsupported_op")
+        return UNARY_OPS[op_type](_eval_node(node.operand))
+    raise EvalError("Unsupported expression element", "invalid_input")
+
+
+def safe_eval(expr: str) -> Union[int, float, str]:
+    """Safely evaluate an arithmetic expression using ast."""
+    if not expr or not expr.strip():
+        return "Empty Expression"
+    expr = expr.strip()
+    allowed_chars = set("0123456789+-*/.%() ")
+    invalid = set(expr) - allowed_chars
+    if invalid:
+        chars = ", ".join(repr(c) for c in sorted(invalid))
+        return f"Invalid characters: {chars}"
+    try:
+        tree = ast.parse(expr, mode='eval')
+        result = _eval_node(tree)
+        if isinstance(result, float) and result == int(result) and abs(result) < 1e15:
+            return int(result)
+        return round(result, 10) if isinstance(result, float) else result
+    except EvalError as e:
+        return str(e)
+    except SyntaxError:
+        return "Syntax Error: Invalid expression"
+    except Exception:
+        logger.exception("Unexpected error evaluating '%s'", expr)
+        return "Error"
+''',
+    'calculator/routes.py': '''"""Calculator route handlers."""
+
+import logging
+from flask import Blueprint, render_template, request
+from calculator.utils import safe_eval
+
+logger = logging.getLogger(__name__)
+calculator_bp = Blueprint('calculator', __name__)
+
+
+@calculator_bp.route("/", methods=["GET", "POST"])
+def index() -> str:
+    """Render the calculator page and process expression submissions."""
+    result: str = ""
+    expression: str = ""
+    error_type: str = ""
+    if request.method == "POST":
+        expression = request.form.get("expression", "").strip()
+        logger.info("Evaluating expression: '%s'", expression)
+        eval_result = safe_eval(expression)
+        if isinstance(eval_result, (int, float)):
+            result = str(eval_result)
+        else:
+            result = str(eval_result)
+            error_type = "error"
+    return render_template("index.html", result=result, expression=expression, error_type=error_type)
 ''',
     'templates/index.html': '''<!DOCTYPE html>
 <html lang="en">
@@ -53,6 +210,7 @@ if __name__ == "__main__":
     <div class="calculator">
         <h2>Flask Calculator</h2>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="expression" placeholder="Enter Expression" value="{{ expression }}" class="display" readonly>
             <div class="buttons">
                 <button type="button" onclick="appendChar('7')">7</button>
@@ -79,7 +237,9 @@ if __name__ == "__main__":
             </div>
         </form>
         {% if result != "" %}
-        <div class="result">Result: {{ result }}</div>
+        <div class="result {% if error_type %}result-error{% endif %}">
+            Result: {{ result }}
+        </div>
         {% endif %}
     </div>
 
@@ -90,6 +250,8 @@ if __name__ == "__main__":
         }
         function clearDisplay() {
             document.querySelector(".display").value = "";
+            let resultEl = document.querySelector(".result");
+            if (resultEl) resultEl.style.display = "none";
         }
     </script>
 </body>
@@ -160,7 +322,83 @@ button.clear:hover {
     margin-top: 15px;
     font-size: 20px;
     font-weight: bold;
+    color: #28a745;
 }
+
+.result-error {
+    color: #dc3545;
+}
+''',
+    'tests/__init__.py': '',
+    'tests/test_calculator.py': '''"""Test suite for Flask Calculator."""
+
+import pytest
+from calculator import create_app
+from calculator.utils import safe_eval
+
+
+@pytest.fixture
+def app():
+    application = create_app({'TESTING': True, 'WTF_CSRF_ENABLED': False, 'SECRET_KEY': 'test'})
+    yield application
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture
+def csrf_client():
+    application = create_app({'TESTING': True, 'WTF_CSRF_ENABLED': True, 'SECRET_KEY': 'test'})
+    return application.test_client()
+
+
+class TestSafeEval:
+    def test_addition(self):
+        assert safe_eval("5+3") == 8
+
+    def test_subtraction(self):
+        assert safe_eval("10-4") == 6
+
+    def test_multiplication(self):
+        assert safe_eval("3*4") == 12
+
+    def test_division(self):
+        assert safe_eval("9/3") == 3
+
+    def test_division_by_zero(self):
+        assert safe_eval("5/0") == "Division by Zero Error"
+
+    def test_empty(self):
+        assert safe_eval("") == "Empty Expression"
+
+    def test_invalid_chars(self):
+        assert "Invalid characters" in safe_eval("import os")
+
+    def test_power(self):
+        assert safe_eval("2**3") == 8
+
+    def test_parentheses(self):
+        assert safe_eval("(2+3)*4") == 20
+
+
+class TestRoutes:
+    def test_get(self, client):
+        assert client.get("/").status_code == 200
+
+    def test_post(self, client):
+        r = client.post("/", data={"expression": "5+3"})
+        assert b"Result: 8" in r.data
+
+    def test_security_headers(self, client):
+        r = client.get("/")
+        assert r.headers.get("X-Content-Type-Options") == "nosniff"
+
+
+class TestCSRF:
+    def test_no_token_rejected(self, csrf_client):
+        assert csrf_client.post("/", data={"expression": "5+3"}).status_code == 400
 ''',
 }
 

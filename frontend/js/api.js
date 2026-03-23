@@ -25,7 +25,13 @@ function apiFetch(url, options = {}) {
                     get: (name) => xhr.getResponseHeader(name),
                 },
                 text: () => Promise.resolve(xhr.responseText),
-                json: () => Promise.resolve(JSON.parse(xhr.responseText)),
+                json: () => {
+                    try {
+                        return Promise.resolve(JSON.parse(xhr.responseText));
+                    } catch (e) {
+                        return Promise.reject(new SyntaxError('Invalid JSON: ' + xhr.responseText.substring(0, 100)));
+                    }
+                },
             };
             resolve(response);
         };
