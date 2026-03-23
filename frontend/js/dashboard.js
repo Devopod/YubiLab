@@ -205,6 +205,7 @@ async function loadDashboardDeployments() {
         container.innerHTML = deployments.map(dep => {
             const statusColor = dep.status === 'running' ? '#3fb950' : dep.status === 'crashed' ? '#f85149' : '#8b949e';
             const statusIcon = dep.status === 'running' ? '\ud83d\udfe2' : dep.status === 'crashed' ? '\ud83d\udd34' : '\u26aa';
+            const statusClass = dep.status === 'running' ? 'running' : dep.status === 'crashed' ? 'crashed' : 'stopped';
             const previewUrl = `/preview-app/${dep.project_id}`;
             const createdAt = dep.created_at ? new Date(dep.created_at).toLocaleString() : '';
             const langIcon = LANG_ICONS[dep.project_language] || '\ud83d\udcc4';
@@ -214,7 +215,7 @@ async function loadDashboardDeployments() {
                 <div class="project-card-header">
                     <div class="project-card-icon">${langIcon}</div>
                     <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="background:color-mix(in srgb, ${statusColor} 20%, transparent);color:${statusColor};padding:2px 8px;border-radius:12px;font-size:0.7rem;font-weight:600;">${statusIcon} ${dep.status}</span>
+                        <span class="deploy-status ${statusClass}">${dep.status}</span>
                     </div>
                 </div>
                 <h3>${escapeHtml(dep.project_name || 'Project #' + dep.project_id)}</h3>
@@ -224,13 +225,13 @@ async function loadDashboardDeployments() {
                 </div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;">
                     ${dep.status === 'running' ? `
-                        <button onclick="event.stopPropagation(); window.open('${previewUrl}','_blank')" class="btn btn-sm" style="background:var(--accent-blue);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83c\udf10 Open</button>
-                        <button onclick="event.stopPropagation(); dashRestartDeploy(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-purple);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83d\udd04 Restart</button>
-                        <button onclick="event.stopPropagation(); dashStopDeploy(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-orange, #d29922);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\u23f9 Stop</button>
+                        <button onclick="event.stopPropagation(); window.open('${previewUrl}','_blank')" class="deploy-action-btn btn-open">\ud83c\udf10 Open</button>
+                        <button onclick="event.stopPropagation(); dashRestartDeploy(${dep.project_id})" class="deploy-action-btn btn-restart">\ud83d\udd04 Restart</button>
+                        <button onclick="event.stopPropagation(); dashStopDeploy(${dep.project_id})" class="deploy-action-btn btn-stop">\u23f9 Stop</button>
                     ` : `
-                        <button onclick="event.stopPropagation(); dashRedeployProject(${dep.project_id})" class="btn btn-sm" style="background:var(--accent-green);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83d\ude80 Redeploy</button>
+                        <button onclick="event.stopPropagation(); dashRedeployProject(${dep.project_id})" class="deploy-action-btn btn-redeploy">\ud83d\ude80 Redeploy</button>
                     `}
-                    <button onclick="event.stopPropagation(); dashDeleteDeploy(${dep.id})" class="btn btn-sm" style="background:var(--danger);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">\ud83d\uddd1 Delete</button>
+                    <button onclick="event.stopPropagation(); dashDeleteDeploy(${dep.id})" class="deploy-action-btn btn-delete">\ud83d\uddd1 Delete</button>
                 </div>
                 <div class="project-meta">
                     <span class="project-lang-badge">${langIcon} ${dep.project_language || 'unknown'}</span>

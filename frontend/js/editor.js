@@ -1451,10 +1451,19 @@ async function deleteDeployment(deployId) {
 // ============================================
 
 function goBack() {
-    // Save any modified files
-    openTabs.forEach((tab, i) => {
-        if (tab.modified) saveFile(i);
-    });
+    // Check for unsaved changes
+    const hasUnsaved = openTabs.some(tab => tab.modified);
+    if (hasUnsaved) {
+        if (!confirm('You have unsaved changes. Save before leaving?')) {
+            // User chose not to save, just go back
+            window.location.href = '/';
+            return;
+        }
+        // Save all modified files before navigating
+        openTabs.forEach((tab, i) => {
+            if (tab.modified) saveFile(i);
+        });
+    }
     window.location.href = '/';
 }
 

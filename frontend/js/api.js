@@ -29,7 +29,23 @@ function apiFetch(url, options = {}) {
                     try {
                         return Promise.resolve(JSON.parse(xhr.responseText));
                     } catch (e) {
-                        return Promise.reject(new SyntaxError('Invalid JSON: ' + xhr.responseText.substring(0, 100)));
+                        // Detect specific error scenarios for better messages
+                        const text = xhr.responseText || '';
+                        let errorMsg = 'Server returned an invalid response';
+
+                        if (xhr.status === 0) {
+                            errorMsg = 'Cannot connect to server. Please check if the backend is running.';
+                        } else if (xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
+                            errorMsg = 'Server is temporarily unavailable. Please try again in a moment.';
+                        } else if (xhr.status === 401) {
+                            errorMsg = 'Session expired. Please log in again.';
+                        } else if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('ngrok')) {
+                            errorMsg = 'Backend server is not responding properly. It may be restarting.';
+                        } else if (text.length === 0) {
+                            errorMsg = 'Server returned an empty response.';
+                        }
+
+                        return Promise.reject(new SyntaxError(errorMsg));
                     }
                 },
             };
@@ -37,13 +53,35 @@ function apiFetch(url, options = {}) {
         };
 
         xhr.onerror = function () {
-            reject(new TypeError('Network request failed'));
+            reject(new TypeError('Cannot connect to server. Please check your connection and try again.'));
         };
 
         xhr.ontimeout = function () {
-            reject(new TypeError('Request timeout'));
+            reject(new TypeError('Request timed out. The server may be busy - please try again.'));
         };
 
         xhr.send(options.body || null);
     });
 }
+
+// Connection status checker
+let _connectionOk = true;
+async function checkBackendHealth() {
+    try {
+        const res = await apiFetch('/api/health', { timeout: 5000 });
+        _connectionOk = res.ok;
+    } catch (e) {
+        _connectionOk = false;
+    }
+    // Update status indicator if it exists
+    const indicator = document.getElementById('connection-status');
+    if (indicator) {
+        indicator.className = _connectionOk ? 'conn-status conn-ok' : 'conn-status conn-err';
+        indicator.title = _connectionOk ? 'Backend connected' : 'Backend offline';
+    }
+}
+
+// Check health every 30 seconds
+setInterval(checkBackendHealth, 30000);
+// Initial check after 2 seconds
+setTimeout(checkBackendHealth, 2000);
