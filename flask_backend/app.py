@@ -196,9 +196,18 @@ def preview_app(project_id, path):
 
         return Response(content, status=resp.status_code, headers=resp_headers)
     except req.exceptions.ConnectionError:
-        return '<html><body style="background:#0d1117;color:#8b949e;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2 style="color:#58a6ff">Starting up...</h2><p>Your app is still launching. Please wait a few seconds and refresh.</p></div></body></html>', 503
+        return '''<html><head><meta http-equiv="refresh" content="2"></head>
+<body style="background:#0d1117;color:#8b949e;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center">
+<div style="width:40px;height:40px;border:3px solid #30363d;border-top:3px solid #58a6ff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
+<h2 style="color:#58a6ff;margin-bottom:8px;">Starting up...</h2>
+<p>Your app is launching. This page will auto-refresh.</p>
+<style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
+</div></body></html>''', 503
     except Exception as e:
-        return f'<html><body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Error</h2><p>{str(e)}</p></div></body></html>', 503
+        return f'''<html><head><meta http-equiv="refresh" content="3"></head>
+<body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><h2>Error</h2><p>{str(e)}</p><p style="color:#8b949e;font-size:0.85rem;">Retrying automatically...</p></div></body></html>''', 503
 
 
 @app.route('/api/health', methods=['GET'])
