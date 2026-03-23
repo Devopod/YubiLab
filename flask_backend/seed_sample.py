@@ -1057,6 +1057,630 @@ if __name__ == "__main__":
 }
 
 
+CHATBOT_FILES = {
+    'app.py': '''"""Infinite Learner AI Chatbot — Developed by Dewan Sakibul Islam, Dhaka, Bangladesh.
+A stylish Flask chatbot powered by YubiAI GPT-OSS 120B model.
+"""
+
+import os
+import json
+import requests
+from flask import Flask, render_template, request, jsonify, session
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'infinite-learner-secret-key')
+
+# YubiAI API Configuration
+API_URL = os.environ.get('YUBIAI_API_URL', 'https://deena-handwoven-prefixally.ngrok-free.dev/api/v1/chat')
+API_KEY = os.environ.get('YUBIAI_API_KEY', '')
+
+SYSTEM_PROMPT = """You are Infinite Learner AI, an intelligent, friendly, and knowledgeable AI chatbot developed by Dewan Sakibul Islam at Dhaka, Bangladesh. You are powered by GPT-OSS 120B.
+
+Your personality:
+- Warm, helpful, and encouraging
+- You explain complex topics in simple terms
+- You use examples and analogies to teach
+- You can help with coding, math, science, writing, and general knowledge
+- You always encourage learning and curiosity
+- When you don\'t know something, you say so honestly
+
+Keep responses concise but informative. Use markdown formatting for code blocks and lists when appropriate."""
+
+
+@app.route('/')
+def index():
+    if 'messages' not in session:
+        session['messages'] = []
+    return render_template('index.html')
+
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    data = request.get_json()
+    user_message = data.get('message', '').strip()
+
+    if not user_message:
+        return jsonify({'error': 'Message is required'}), 400
+
+    if not API_KEY:
+        return jsonify({'error': 'YubiAI API key not configured. Set YUBIAI_API_KEY environment variable.'}), 500
+
+    # Build conversation history
+    if 'messages' not in session:
+        session['messages'] = []
+
+    session['messages'].append({'role': 'user', 'content': user_message})
+
+    # Keep last 20 messages for context
+    history = session['messages'][-20:]
+
+    try:
+        resp = requests.post(
+            API_URL,
+            headers={
+                'Authorization': f'Bearer {API_KEY}',
+                'Content-Type': 'application/json',
+            },
+            json={
+                'message': user_message,
+                'model': 'gpt-oss-120b',
+                'system_prompt': SYSTEM_PROMPT,
+                'conversation_history': [
+                    {'role': m['role'], 'content': m['content']}
+                    for m in history[:-1]  # exclude current message (already in 'message' field)
+                ],
+                'temperature': 0.7,
+                'top_p': 0.9,
+                'max_tokens': 2048,
+            },
+            timeout=120,
+        )
+
+        if resp.status_code == 200:
+            result = resp.json()
+            ai_response = result.get('response', 'I could not generate a response.')
+            model = result.get('model', 'gpt-oss-120b')
+            usage = result.get('usage', {})
+
+            session['messages'].append({'role': 'assistant', 'content': ai_response})
+            session.modified = True
+
+            return jsonify({
+                'response': ai_response,
+                'model': model,
+                'usage': usage,
+            })
+        else:
+            error_text = resp.text
+            if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
+                return jsonify({'error': 'YubiAI API is currently offline. Please try again later.'}), 503
+            return jsonify({'error': f'API returned status {resp.status_code}'}), 500
+
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': 'Cannot connect to YubiAI API. The server may be offline.'}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Request timed out. Please try again.'}), 504
+    except Exception as e:
+        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+
+
+@app.route('/api/clear', methods=['POST'])
+def clear_chat():
+    session['messages'] = []
+    return jsonify({'status': 'cleared'})
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', '3000')))
+    app.run(host='0.0.0.0', port=port, debug=True)
+''',
+    'requirements.txt': '''Flask==2.3.3
+requests==2.31.0
+''',
+    'templates/index.html': '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinite Learner AI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <div class="header-left">
+                <div class="bot-avatar">
+                    <span class="pulse"></span>
+                    IL
+                </div>
+                <div class="header-info">
+                    <h1>Infinite Learner AI</h1>
+                    <p class="subtitle">Powered by GPT-OSS 120B &bull; by Dewan Sakibul Islam</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn-icon" onclick="clearChat()" title="Clear chat">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="chat-messages" id="chat-messages">
+            <div class="welcome-message">
+                <div class="welcome-avatar">IL</div>
+                <h2>Welcome to Infinite Learner AI!</h2>
+                <p>I'm your intelligent AI assistant powered by GPT-OSS 120B. Ask me anything about coding, science, math, or any topic!</p>
+                <div class="suggestion-chips">
+                    <button class="chip" onclick="sendSuggestion('Explain quantum computing in simple terms')">Explain quantum computing</button>
+                    <button class="chip" onclick="sendSuggestion('Write a Python function to sort a list')">Python sorting function</button>
+                    <button class="chip" onclick="sendSuggestion('What are the best practices for web development?')">Web dev best practices</button>
+                    <button class="chip" onclick="sendSuggestion('Tell me about Bangladesh')">About Bangladesh</button>
+                </div>
+                <p class="dev-credit">Developed by <strong>Dewan Sakibul Islam</strong> &bull; Dhaka, Bangladesh</p>
+            </div>
+        </div>
+
+        <div class="chat-input-area">
+            <div class="input-wrapper">
+                <textarea id="message-input" placeholder="Ask me anything..." rows="1" onkeydown="handleKeyDown(event)"></textarea>
+                <button class="send-btn" id="send-btn" onclick="sendMessage()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                </button>
+            </div>
+            <p class="input-footer">Infinite Learner AI can make mistakes. Verify important information.</p>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='chat.js') }}"></script>
+</body>
+</html>
+''',
+    'static/style.css': '''* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #1c2333;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --accent-blue: #58a6ff;
+    --accent-purple: #bc8cff;
+    --accent-green: #3fb950;
+    --accent-orange: #f0883e;
+    --border-color: rgba(255,255,255,0.08);
+    --user-bubble: linear-gradient(135deg, #58a6ff, #4c9aed);
+    --bot-bubble: rgba(255,255,255,0.06);
+}
+
+body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+}
+
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+/* Header */
+.chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.header-left { display: flex; align-items: center; gap: 14px; }
+
+.bot-avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.9rem; color: #fff;
+    position: relative;
+    box-shadow: 0 4px 16px rgba(88,166,255,0.25);
+}
+
+.pulse {
+    position: absolute; bottom: 0; right: 0;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    border: 2px solid var(--bg-secondary);
+}
+
+.header-info h1 {
+    font-size: 1.1rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+.subtitle { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
+
+.btn-icon {
+    width: 40px; height: 40px;
+    border-radius: 10px; border: 1px solid var(--border-color);
+    background: transparent; color: var(--text-secondary);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.2s;
+}
+.btn-icon:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+
+/* Messages Area */
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.chat-messages::-webkit-scrollbar { width: 6px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+/* Welcome Message */
+.welcome-message {
+    text-align: center;
+    padding: 60px 20px;
+    animation: fadeIn 0.5s ease;
+}
+
+.welcome-avatar {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.8rem; font-weight: 700; color: #fff;
+    margin: 0 auto 20px;
+    box-shadow: 0 8px 32px rgba(88,166,255,0.3);
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+.welcome-message h2 {
+    font-size: 1.5rem; margin-bottom: 12px;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+.welcome-message p { color: var(--text-secondary); max-width: 480px; margin: 0 auto; line-height: 1.6; }
+
+.suggestion-chips {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    justify-content: center; margin-top: 24px;
+}
+
+.chip {
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.82rem; cursor: pointer;
+    transition: all 0.2s;
+}
+.chip:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: rgba(88,166,255,0.08); }
+
+.dev-credit { margin-top: 32px; font-size: 0.78rem; color: var(--text-secondary); opacity: 0.6; }
+
+/* Message Bubbles */
+.message { display: flex; gap: 12px; max-width: 85%; animation: slideUp 0.3s ease; }
+.message.user { margin-left: auto; flex-direction: row-reverse; }
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.msg-avatar {
+    width: 34px; height: 34px; min-width: 34px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.75rem; color: #fff;
+    flex-shrink: 0;
+}
+.message.bot .msg-avatar { background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); }
+.message.user .msg-avatar { background: linear-gradient(135deg, var(--accent-green), #2ea44f); }
+
+.msg-content {
+    padding: 12px 16px;
+    border-radius: 16px;
+    line-height: 1.6;
+    font-size: 0.92rem;
+    word-wrap: break-word;
+}
+.message.bot .msg-content {
+    background: var(--bot-bubble);
+    border: 1px solid var(--border-color);
+    border-top-left-radius: 4px;
+}
+.message.user .msg-content {
+    background: var(--user-bubble);
+    color: #fff;
+    border-top-right-radius: 4px;
+}
+
+.msg-content pre {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-size: 0.85rem;
+    border: 1px solid rgba(255,255,255,0.05);
+}
+.msg-content code {
+    background: rgba(0,0,0,0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+.msg-content pre code { background: none; padding: 0; }
+
+.msg-meta {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    opacity: 0.6;
+}
+
+/* Typing Indicator */
+.typing-indicator {
+    display: flex; gap: 4px; padding: 12px 16px;
+    background: var(--bot-bubble);
+    border: 1px solid var(--border-color);
+    border-radius: 16px; border-top-left-radius: 4px;
+    width: fit-content;
+}
+.typing-indicator span {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    animation: bounce 1.4s infinite both;
+}
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+/* Input Area */
+.chat-input-area {
+    padding: 16px 24px 20px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.input-wrapper {
+    display: flex; align-items: flex-end; gap: 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 8px 8px 8px 16px;
+    transition: border-color 0.2s;
+}
+.input-wrapper:focus-within { border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(88,166,255,0.1); }
+
+textarea {
+    flex: 1; border: none; background: none;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-family: inherit;
+    resize: none;
+    outline: none;
+    padding: 8px 0;
+    max-height: 150px;
+    line-height: 1.5;
+}
+textarea::placeholder { color: var(--text-secondary); }
+
+.send-btn {
+    width: 40px; height: 40px; min-width: 40px;
+    border-radius: 12px; border: none;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 12px rgba(88,166,255,0.25);
+}
+.send-btn:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(88,166,255,0.35); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.input-footer {
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    opacity: 0.5;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .chat-header { padding: 12px 16px; }
+    .chat-messages { padding: 16px; }
+    .chat-input-area { padding: 12px 16px 16px; }
+    .message { max-width: 92%; }
+    .welcome-message { padding: 40px 16px; }
+    .welcome-avatar { width: 64px; height: 64px; font-size: 1.5rem; }
+    .welcome-message h2 { font-size: 1.2rem; }
+    .suggestion-chips { gap: 6px; }
+    .chip { font-size: 0.78rem; padding: 6px 12px; }
+}
+
+@media (max-width: 480px) {
+    .header-info h1 { font-size: 0.95rem; }
+    .subtitle { font-size: 0.7rem; }
+    .bot-avatar { width: 38px; height: 38px; font-size: 0.8rem; }
+}
+''',
+    'static/chat.js': '''const messagesContainer = document.getElementById('chat-messages');
+const messageInput = document.getElementById('message-input');
+const sendBtn = document.getElementById('send-btn');
+let isTyping = false;
+
+function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+}
+
+// Auto-resize textarea
+messageInput.addEventListener('input', () => {
+    messageInput.style.height = 'auto';
+    messageInput.style.height = Math.min(messageInput.scrollHeight, 150) + 'px';
+});
+
+function sendSuggestion(text) {
+    messageInput.value = text;
+    sendMessage();
+}
+
+function formatMessage(text) {
+    // Convert markdown code blocks
+    text = text.replace(/```(\\w*)\\n([\\s\\S]*?)```/g, '<pre><code>$2</code></pre>');
+    // Inline code
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Bold
+    text = text.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+    // Italic
+    text = text.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+    // Line breaks
+    text = text.replace(/\\n/g, '<br>');
+    return text;
+}
+
+function addMessage(role, content, meta = '') {
+    // Remove welcome message if it exists
+    const welcome = messagesContainer.querySelector('.welcome-message');
+    if (welcome) welcome.remove();
+
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+
+    const avatarText = role === 'user' ? 'You' : 'IL';
+    const formatted = role === 'bot' ? formatMessage(content) : content.replace(/\\n/g, '<br>');
+
+    div.innerHTML = `
+        <div class="msg-avatar">${avatarText}</div>
+        <div>
+            <div class="msg-content">${formatted}</div>
+            ${meta ? `<div class="msg-meta">${meta}</div>` : ''}
+        </div>
+    `;
+
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function showTyping() {
+    const div = document.createElement('div');
+    div.className = 'message bot';
+    div.id = 'typing-msg';
+    div.innerHTML = `
+        <div class="msg-avatar">IL</div>
+        <div class="typing-indicator">
+            <span></span><span></span><span></span>
+        </div>
+    `;
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function removeTyping() {
+    const el = document.getElementById('typing-msg');
+    if (el) el.remove();
+}
+
+async function sendMessage() {
+    const message = messageInput.value.trim();
+    if (!message || isTyping) return;
+
+    isTyping = true;
+    sendBtn.disabled = true;
+    messageInput.value = '';
+    messageInput.style.height = 'auto';
+
+    addMessage('user', message);
+    showTyping();
+
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message }),
+        });
+
+        removeTyping();
+
+        if (res.ok) {
+            const data = await res.json();
+            const meta = data.usage ? `${data.model || 'gpt-oss-120b'} &bull; ${data.usage.total_tokens || '?'} tokens` : '';
+            addMessage('bot', data.response, meta);
+        } else {
+            let errorMsg = 'Something went wrong. Please try again.';
+            try {
+                const err = await res.json();
+                errorMsg = err.error || errorMsg;
+            } catch (e) {}
+            addMessage('bot', errorMsg);
+        }
+    } catch (e) {
+        removeTyping();
+        addMessage('bot', 'Connection error. Please check if the server is running.');
+    }
+
+    isTyping = false;
+    sendBtn.disabled = false;
+    messageInput.focus();
+}
+
+async function clearChat() {
+    try { await fetch('/api/clear', { method: 'POST' }); } catch(e) {}
+    messagesContainer.innerHTML = `
+        <div class="welcome-message">
+            <div class="welcome-avatar">IL</div>
+            <h2>Welcome to Infinite Learner AI!</h2>
+            <p>I\\'m your intelligent AI assistant powered by GPT-OSS 120B. Ask me anything about coding, science, math, or any topic!</p>
+            <div class="suggestion-chips">
+                <button class="chip" onclick="sendSuggestion('Explain quantum computing in simple terms')">Explain quantum computing</button>
+                <button class="chip" onclick="sendSuggestion('Write a Python function to sort a list')">Python sorting function</button>
+                <button class="chip" onclick="sendSuggestion('What are the best practices for web development?')">Web dev best practices</button>
+                <button class="chip" onclick="sendSuggestion('Tell me about Bangladesh')">About Bangladesh</button>
+            </div>
+            <p class="dev-credit">Developed by <strong>Dewan Sakibul Islam</strong> &bull; Dhaka, Bangladesh</p>
+        </div>
+    `;
+}
+
+messageInput.focus();
+''',
+}
+
+
 def _create_project_files(project_path, files_dict):
     """Create project files, handling nested directories."""
     os.makedirs(project_path, exist_ok=True)
@@ -1116,6 +1740,12 @@ def seed_sample_project(user_id):
             'language': 'html',
             'description': 'Welcome to YubiLab! A sample HTML project to get you started.',
             'files': SAMPLE_FILES,
+        },
+        {
+            'name': 'infinite-learner-chatbot',
+            'language': 'python',
+            'description': 'Infinite Learner AI Chatbot — powered by GPT-OSS 120B. By Dewan Sakibul Islam.',
+            'files': CHATBOT_FILES,
         },
     ]
 
