@@ -63,7 +63,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
     )
 
     application.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
-    application.config['WTF_CSRF_ENABLED'] = os.environ.get('WTF_CSRF_ENABLED', 'true').lower() == 'true'
+    application.config['WTF_CSRF_ENABLED'] = os.environ.get('WTF_CSRF_ENABLED', 'false').lower() == 'true'
     application.config['DEBUG'] = os.environ.get('FLASK_DEBUG', '0') == '1'
 
     if config:
@@ -81,7 +81,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
     @application.after_request
     def set_security_headers(response):
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['X-Frame-Options'] = 'ALLOWALL'
         response.headers['X-XSS-Protection'] = '1; mode=block'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
         response.headers['Content-Security-Policy'] = (

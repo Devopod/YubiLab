@@ -141,18 +141,15 @@ def get_workspace_path(project_id):
 @app.route('/preview-app/<int:project_id>', defaults={'path': ''}, methods=['GET', 'POST'])
 @app.route('/preview-app/<int:project_id>/<path:path>', methods=['GET', 'POST'])
 def preview_app(project_id, path):
-    from auth import get_current_user
     from models import get_db
     import requests as req
 
-    user = get_current_user()
-    if not user:
-        return "Unauthorized", 401
-
+    # Allow unauthenticated access to preview - the deploy itself is authenticated
+    # This enables iframe embedding and direct URL access to deployed apps
     conn = get_db()
     deployment = conn.execute(
-        'SELECT * FROM deployments WHERE project_id = ? AND user_id = ? AND status = ?',
-        (project_id, user['id'], 'running')
+        'SELECT * FROM deployments WHERE project_id = ? AND status = ?',
+        (project_id, 'running')
     ).fetchone()
     conn.close()
 
