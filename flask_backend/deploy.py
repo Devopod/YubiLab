@@ -6,6 +6,7 @@ import os
 import subprocess
 import signal
 import socket as sock
+import time
 
 deploy_bp = Blueprint('deploy', __name__)
 
@@ -162,13 +163,31 @@ def deploy_project(user, project_id):
         conn.commit()
         conn.close()
 
+        # Wait for the app to be ready (up to 8 seconds)
+        ready = False
+        for _ in range(16):
+            time.sleep(0.5)
+            try:
+                s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+                s.settimeout(1)
+                s.connect(('127.0.0.1', port))
+                s.close()
+                ready = True
+                break
+            except (ConnectionRefusedError, OSError):
+                # Check if process died
+                if proc.poll() is not None:
+                    break
+                continue
+
         return jsonify({
             'status': 'deployed',
             'port': port,
             'pid': proc.pid,
             'url': deploy_url,
             'command': run_command,
-            'message': f'Project deployed on port {port}',
+            'ready': ready,
+            'message': f'Project deployed on port {port}' + (' and ready!' if ready else ' (starting up...)'),
         })
 
     except Exception as e:
