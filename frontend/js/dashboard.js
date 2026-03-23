@@ -20,6 +20,13 @@ let currentUser = null;
         currentUser = data.user;
         document.getElementById('user-name').textContent = currentUser.username;
         document.getElementById('user-avatar').textContent = currentUser.username[0].toUpperCase();
+        // Populate profile dropdown
+        const dropdownAvatar = document.getElementById('dropdown-avatar');
+        const dropdownName = document.getElementById('dropdown-name');
+        const dropdownEmail = document.getElementById('dropdown-email');
+        if (dropdownAvatar) dropdownAvatar.textContent = currentUser.username[0].toUpperCase();
+        if (dropdownName) dropdownName.textContent = currentUser.username;
+        if (dropdownEmail) dropdownEmail.textContent = currentUser.email || '';
         loadProjects();
         loadDashboardDeployments();
     } catch (e) {
@@ -285,12 +292,117 @@ async function dashDeleteDeploy(deployId) {
     } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
+// ============================================
+// PROFILE DROPDOWN
+// ============================================
+
+function toggleProfileDropdown(e) {
+    e.stopPropagation();
+    const dropdown = document.getElementById('profile-dropdown');
+    const trigger = document.getElementById('user-menu-trigger');
+    if (dropdown.classList.contains('show')) {
+        dropdown.classList.remove('show');
+        trigger.classList.remove('dropdown-open');
+    } else {
+        dropdown.classList.add('show');
+        trigger.classList.add('dropdown-open');
+    }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('profile-dropdown');
+    const trigger = document.getElementById('user-menu-trigger');
+    if (dropdown && !trigger.contains(e.target)) {
+        dropdown.classList.remove('show');
+        trigger.classList.remove('dropdown-open');
+    }
+});
+
+// ============================================
+// ACCOUNT DELETION
+// ============================================
+
+function showDeleteAccountModal() {
+    // Close the profile dropdown first
+    const dropdown = document.getElementById('profile-dropdown');
+    if (dropdown) dropdown.classList.remove('show');
+    document.getElementById('delete-account-modal').classList.add('active');
+    document.getElementById('delete-confirm-input').value = '';
+    document.getElementById('delete-confirm-password').value = '';
+    document.getElementById('confirm-delete-btn').disabled = true;
+    document.getElementById('delete-confirm-input').focus();
+}
+
+function hideDeleteAccountModal() {
+    document.getElementById('delete-account-modal').classList.remove('active');
+}
+
+// Enable delete button only when username matches
+document.getElementById('delete-confirm-input')?.addEventListener('input', (e) => {
+    const btn = document.getElementById('confirm-delete-btn');
+    const password = document.getElementById('delete-confirm-password').value;
+    btn.disabled = !(e.target.value === currentUser?.username && password.length > 0);
+});
+document.getElementById('delete-confirm-password')?.addEventListener('input', () => {
+    const btn = document.getElementById('confirm-delete-btn');
+    const username = document.getElementById('delete-confirm-input').value;
+    const password = document.getElementById('delete-confirm-password').value;
+    btn.disabled = !(username === currentUser?.username && password.length > 0);
+});
+
+async function handleDeleteAccount() {
+    const usernameInput = document.getElementById('delete-confirm-input').value;
+    const password = document.getElementById('delete-confirm-password').value;
+
+    if (usernameInput !== currentUser?.username) {
+        showToast('Username does not match', 'error');
+        return;
+    }
+    if (!password) {
+        showToast('Password is required', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('confirm-delete-btn');
+    btn.disabled = true;
+    btn.textContent = 'Deleting...';
+
+    try {
+        const res = await apiFetch('/api/auth/delete-account', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+
+        if (res.ok) {
+            showToast('Account deleted. Redirecting...', 'success');
+            setTimeout(() => { window.location.href = '/login'; }, 1500);
+        } else {
+            const data = await res.json();
+            showToast(data.error || 'Failed to delete account', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Delete My Account';
+        }
+    } catch (e) {
+        showToast('Connection error', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Delete My Account';
+    }
+}
+
 // Close modal on escape
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideCreateModal();
+    if (e.key === 'Escape') {
+        hideCreateModal();
+        hideDeleteAccountModal();
+    }
 });
 
 // Close modal on outside click
 document.getElementById('create-modal').addEventListener('click', (e) => {
     if (e.target.classList.contains('modal-overlay')) hideCreateModal();
+});
+document.getElementById('delete-account-modal')?.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-overlay')) hideDeleteAccountModal();
 });

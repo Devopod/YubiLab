@@ -13,14 +13,28 @@
         <div class="dashboard-header">
             <div class="logo"><a href="/" style="text-decoration:none;background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">YubiLab</a></div>
             <div class="header-right">
-                <a href="/docs" class="btn btn-ghost btn-sm">Docs</a>
-                <a href="/api-keys" class="btn btn-ghost btn-sm">API Keys</a>
-                <a href="/settings" class="btn btn-ghost btn-sm">Settings</a>
-                <div class="user-info">
+                <div class="user-info" id="user-menu-trigger" onclick="toggleProfileDropdown(event)">
                     <div class="user-avatar" id="user-avatar">U</div>
                     <span id="user-name">User</span>
+                    <span class="dropdown-arrow">▾</span>
+                    <div class="profile-dropdown" id="profile-dropdown">
+                        <div class="profile-dropdown-header">
+                            <div class="profile-dropdown-avatar" id="dropdown-avatar">U</div>
+                            <div class="profile-dropdown-info">
+                                <div class="profile-dropdown-name" id="dropdown-name">User</div>
+                                <div class="profile-dropdown-email" id="dropdown-email">user@email.com</div>
+                            </div>
+                        </div>
+                        <div class="profile-dropdown-divider"></div>
+                        <a href="/settings" class="profile-dropdown-item">⚙️ Settings</a>
+                        <a href="/api-keys" class="profile-dropdown-item">🔑 API Keys</a>
+                        <a href="/docs" class="profile-dropdown-item">📚 Documentation</a>
+                        <div class="profile-dropdown-divider"></div>
+                        <button class="profile-dropdown-item" onclick="handleLogout()">🚪 Logout</button>
+                        <div class="profile-dropdown-divider"></div>
+                        <button class="profile-dropdown-item danger" onclick="showDeleteAccountModal()">🗑 Delete Account</button>
+                    </div>
                 </div>
-                <button class="btn btn-ghost btn-sm" onclick="handleLogout()">Logout</button>
             </div>
         </div>
 
@@ -96,6 +110,28 @@
                     <button type="submit" class="btn btn-primary">Create Project</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Delete Account Modal -->
+    <div class="modal-overlay" id="delete-account-modal">
+        <div class="modal" style="max-width:440px;">
+            <h3 style="color:#f85149;">Delete Account</h3>
+            <p style="color:var(--text-secondary);margin:12px 0 8px;">This action is <strong>permanent</strong> and cannot be undone. All your projects, files, deployments, and data will be permanently deleted.</p>
+            <div class="auth-form" style="margin-top:16px;">
+                <div class="form-group">
+                    <label>Type your username to confirm:</label>
+                    <input type="text" id="delete-confirm-input" placeholder="Enter your username" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>Enter your password:</label>
+                    <input type="password" id="delete-confirm-password" placeholder="Enter your password">
+                </div>
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+                <button type="button" class="btn btn-ghost" onclick="hideDeleteAccountModal()">Cancel</button>
+                <button type="button" class="btn" style="background:#f85149;color:#fff;" id="confirm-delete-btn" onclick="handleDeleteAccount()" disabled>Delete My Account</button>
+            </div>
         </div>
     </div>
 
