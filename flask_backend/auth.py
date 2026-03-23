@@ -70,6 +70,7 @@ def register():
     os.makedirs(user_workspace, exist_ok=True)
 
     session['user_id'] = user_id
+    session.permanent = True
 
     # Seed sample project for new user
     try:
@@ -104,6 +105,7 @@ def login():
         return jsonify({'error': 'Invalid credentials'}), 401
 
     session['user_id'] = user['id']
+    session.permanent = True
 
     # Ensure workspace exists
     user_workspace = os.path.join(WORKSPACES_DIR, str(user['id']))

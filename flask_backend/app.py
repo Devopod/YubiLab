@@ -17,7 +17,9 @@ app = Flask(__name__, static_folder='../frontend', static_url_path='')
 app.secret_key = SECRET_KEY
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 7  # 7 days
+app.config['SESSION_PERMANENT'] = True
 
 CORS(app, supports_credentials=True, origins=["*"])
 
