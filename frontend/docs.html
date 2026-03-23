@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YubiLab - Documentation</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        .docs-body { overflow-y: auto; }
+        .docs-layout { display: flex; max-width: 1200px; margin: 0 auto; padding: 32px; gap: 32px; }
+        .docs-sidebar { width: 240px; flex-shrink: 0; position: sticky; top: 32px; align-self: flex-start; }
+        .docs-sidebar h4 { color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+        .docs-nav { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+        .docs-nav a { display: block; padding: 8px 12px; color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.9rem; text-decoration: none; transition: var(--transition); }
+        .docs-nav a:hover, .docs-nav a.active { background: var(--bg-hover); color: var(--text-primary); text-decoration: none; }
+        .docs-content { flex: 1; min-width: 0; }
+        .docs-content h1 { font-size: 2rem; margin-bottom: 8px; }
+        .docs-content h2 { font-size: 1.4rem; margin-top: 40px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
+        .docs-content h3 { font-size: 1.1rem; margin-top: 24px; margin-bottom: 12px; color: var(--accent-blue); }
+        .docs-content p { color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px; }
+        .docs-content ul, .docs-content ol { color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px; padding-left: 24px; }
+        .docs-content li { margin-bottom: 8px; }
+        .docs-content code { background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.85em; color: var(--accent-cyan); }
+        .code-block { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; margin: 16px 0; overflow-x: auto; }
+        .code-block code { background: none; padding: 0; color: var(--text-primary); }
+        .code-block pre { font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.6; white-space: pre; }
+        .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; margin: 24px 0; }
+        .feature-box { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 20px; }
+        .feature-box .icon { font-size: 1.5rem; margin-bottom: 8px; }
+        .feature-box h4 { margin-bottom: 4px; }
+        .feature-box p { font-size: 0.85rem; margin-bottom: 0; }
+        .kbd { display: inline-block; padding: 2px 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary); }
+        .table-wrap { overflow-x: auto; margin: 16px 0; }
+        .docs-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .docs-table th { text-align: left; padding: 10px 14px; background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 600; border-bottom: 1px solid var(--border-color); }
+        .docs-table td { padding: 10px 14px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; }
+        .badge-blue { background: rgba(88,166,255,0.15); color: var(--accent-blue); }
+        .badge-green { background: rgba(63,185,80,0.15); color: var(--accent-green); }
+        .badge-purple { background: rgba(188,140,255,0.15); color: var(--accent-purple); }
+        @media (max-width: 768px) { .docs-layout { flex-direction: column; } .docs-sidebar { width: 100%; position: static; } }
+    </style>
+</head>
+<body class="docs-body">
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <div class="logo"><a href="/" style="text-decoration:none;background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">YubiLab</a></div>
+            <div class="header-right">
+                <a href="/" class="btn btn-ghost btn-sm">Dashboard</a>
+                <a href="/docs" class="btn btn-ghost btn-sm" style="color:var(--accent-blue);">Docs</a>
+                <a href="/api-keys" class="btn btn-ghost btn-sm">API Keys</a>
+                <a href="/settings" class="btn btn-ghost btn-sm">Settings</a>
+                <button class="btn btn-ghost btn-sm" onclick="fetch('/api/auth/logout',{method:'POST',credentials:'include'}).then(()=>location.href='/login')">Logout</button>
+            </div>
+        </div>
+
+        <div class="docs-layout">
+            <div class="docs-sidebar">
+                <h4>Getting Started</h4>
+                <nav class="docs-nav">
+                    <a href="#overview" class="active">Overview</a>
+                    <a href="#quickstart">Quick Start</a>
+                    <a href="#features">Features</a>
+                </nav>
+                <h4 style="margin-top:24px;">Editor</h4>
+                <nav class="docs-nav">
+                    <a href="#editor">Code Editor</a>
+                    <a href="#terminal">Terminal</a>
+                    <a href="#execution">Code Execution</a>
+                    <a href="#preview">HTML Preview</a>
+                </nav>
+                <h4 style="margin-top:24px;">AI</h4>
+                <nav class="docs-nav">
+                    <a href="#yubiai">YubiAI Assistant</a>
+                    <a href="#agent">Autonomous Agent</a>
+                </nav>
+                <h4 style="margin-top:24px;">API</h4>
+                <nav class="docs-nav">
+                    <a href="#api-ref">API Reference</a>
+                    <a href="#languages">Languages</a>
+                    <a href="#shortcuts">Shortcuts</a>
+                </nav>
+            </div>
+
+            <div class="docs-content">
+                <h1 id="overview">YubiLab Documentation</h1>
+                <p>YubiLab is a full-stack cloud IDE platform similar to Replit. Build, run, and deploy code directly from your browser with real-time editing, an interactive terminal, multi-language execution, and AI-powered assistance.</p>
+
+                <div class="feature-grid">
+                    <div class="feature-box">
+                        <div class="icon">&#9997;</div>
+                        <h4>Monaco Editor</h4>
+                        <p>VS Code-powered editor with syntax highlighting, auto-complete, and more.</p>
+                    </div>
+                    <div class="feature-box">
+                        <div class="icon">&#128187;</div>
+                        <h4>Interactive Terminal</h4>
+                        <p>Full Linux shell in your browser via xterm.js and node-pty.</p>
+                    </div>
+                    <div class="feature-box">
+                        <div class="icon">&#9654;</div>
+                        <h4>Multi-Language</h4>
+                        <p>Run Python, JavaScript, C, C++, Java, Go, PHP, and Rust.</p>
+                    </div>
+                    <div class="feature-box">
+                        <div class="icon">&#129302;</div>
+                        <h4>YubiAI</h4>
+                        <p>AI-powered code generation, debugging, and autonomous project building.</p>
+                    </div>
+                </div>
+
+                <h2 id="quickstart">Quick Start</h2>
+                <h3>1. Create a Project</h3>
+                <p>From the dashboard, click <strong>"+ New Project"</strong>. Choose a name, select a language, and click Create.</p>
+
+                <h3>2. Write Code</h3>
+                <p>Click on files in the Explorer to open them in the Monaco editor. You get full syntax highlighting, auto-save (2s debounce), and tab management.</p>
+
+                <h3>3. Run Code</h3>
+                <p>Click the <strong>Run</strong> button or press <span class="kbd">Ctrl+Enter</span> to execute the current file. Output appears in the Console panel.</p>
+
+                <h3>4. Use the Terminal</h3>
+                <p>The terminal panel gives you a full interactive bash shell. Run any Linux command including package installs, git, file management, etc.</p>
+
+                <h3>5. Ask YubiAI</h3>
+                <p>Click the <strong>AI</strong> button to open the YubiAI panel. Choose an action (Generate, Debug, Explain, or Agent) and type your prompt.</p>
+
+                <h2 id="features">Features</h2>
+
+                <h3>Project Management</h3>
+                <ul>
+                    <li>Create projects with 9 language templates</li>
+                    <li>Rename and delete projects from the dashboard</li>
+                    <li>Auto-seeded sample project for new users</li>
+                    <li>Each project gets its own isolated workspace directory</li>
+                </ul>
+
+                <h3>File System</h3>
+                <ul>
+                    <li>Tree-based file explorer with directory support</li>
+                    <li>Create, rename, delete files and folders</li>
+                    <li>Right-click context menu for file operations</li>
+                    <li>Auto-save on changes with 2-second debounce</li>
+                </ul>
+
+                <h2 id="editor">Code Editor</h2>
+                <p>YubiLab uses the <strong>Monaco Editor</strong> (the same engine that powers VS Code). Features include:</p>
+                <ul>
+                    <li>Syntax highlighting for 20+ languages</li>
+                    <li>Bracket pair colorization</li>
+                    <li>Code folding</li>
+                    <li>Minimap navigation</li>
+                    <li>Smooth cursor animation</li>
+                    <li>Custom dark theme ("yubilab-dark")</li>
+                </ul>
+
+                <h2 id="terminal">Terminal</h2>
+                <p>The integrated terminal provides a full Linux bash shell powered by <strong>xterm.js</strong> and <strong>node-pty</strong>. You can:</p>
+                <ul>
+                    <li>Run any bash command (ls, cd, mkdir, rm, etc.)</li>
+                    <li>Install packages (pip install, npm install)</li>
+                    <li>Use git commands</li>
+                    <li>Navigate the file system</li>
+                    <li>Run scripts and servers</li>
+                </ul>
+                <p>The terminal starts in your project directory automatically.</p>
+
+                <h2 id="execution">Code Execution</h2>
+                <p>YubiLab supports running code in 8 languages with real-time streaming output:</p>
+
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead>
+                            <tr><th>Language</th><th>Extension</th><th>Command</th><th>Type</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Python</td><td>.py</td><td><code>python3</code></td><td><span class="badge badge-green">Interpreted</span></td></tr>
+                            <tr><td>JavaScript</td><td>.js</td><td><code>node</code></td><td><span class="badge badge-green">Interpreted</span></td></tr>
+                            <tr><td>C</td><td>.c</td><td><code>gcc + run</code></td><td><span class="badge badge-blue">Compiled</span></td></tr>
+                            <tr><td>C++</td><td>.cpp</td><td><code>g++ + run</code></td><td><span class="badge badge-blue">Compiled</span></td></tr>
+                            <tr><td>Java</td><td>.java</td><td><code>javac + java</code></td><td><span class="badge badge-blue">Compiled</span></td></tr>
+                            <tr><td>Go</td><td>.go</td><td><code>go run</code></td><td><span class="badge badge-green">Interpreted</span></td></tr>
+                            <tr><td>PHP</td><td>.php</td><td><code>php</code></td><td><span class="badge badge-green">Interpreted</span></td></tr>
+                            <tr><td>Rust</td><td>.rs</td><td><code>rustc + run</code></td><td><span class="badge badge-blue">Compiled</span></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <p>Execution has a <strong>30-second timeout</strong> and <strong>1MB output limit</strong> for safety.</p>
+
+                <h2 id="preview">HTML Preview</h2>
+                <p>For HTML projects, click the <strong>Preview</strong> button to render your HTML/CSS/JS in an iframe. The preview auto-updates when you switch to the Preview tab.</p>
+
+                <h2 id="yubiai">YubiAI Assistant</h2>
+                <p>YubiAI is powered by <strong>GPT-OSS 120B</strong> and provides:</p>
+                <ul>
+                    <li><strong>Generate</strong> - Generate code from natural language descriptions</li>
+                    <li><strong>Debug</strong> - Analyze code and fix bugs automatically</li>
+                    <li><strong>Explain</strong> - Get clear explanations of code</li>
+                    <li><strong>Agent</strong> - Autonomously build entire projects from prompts</li>
+                </ul>
+                <p>YubiAI understands the current file context. Select code to provide specific context, or it will use the entire file.</p>
+
+                <h2 id="agent">Autonomous Agent</h2>
+                <p>The YubiAI Agent can autonomously create entire projects from a prompt. It will:</p>
+                <ol>
+                    <li>Analyze your request and create a plan</li>
+                    <li>Generate all necessary files and folders</li>
+                    <li>Write complete, working code</li>
+                    <li>Suggest run commands</li>
+                </ol>
+                <p>Switch to <strong>"Agent"</strong> mode in the AI panel, then describe what you want to build.</p>
+                <div class="code-block"><pre><code>Example prompt:
+"Build a Flask calculator app with add, subtract, multiply, divide operations"</code></pre></div>
+
+                <h2 id="api-ref">API Reference</h2>
+                <h3>Authentication</h3>
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+                        <tbody>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/auth/register</code></td><td>Register new user</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/auth/login</code></td><td>Login</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/auth/logout</code></td><td>Logout</td></tr>
+                            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/api/auth/me</code></td><td>Get current user</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>Projects</h3>
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+                        <tbody>
+                            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/api/projects</code></td><td>List projects</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/projects</code></td><td>Create project</td></tr>
+                            <tr><td><span class="badge badge-purple">PUT</span></td><td><code>/api/projects/:id</code></td><td>Rename project</td></tr>
+                            <tr><td><span class="badge" style="background:rgba(248,81,73,0.15);color:var(--accent-red);">DELETE</span></td><td><code>/api/projects/:id</code></td><td>Delete project</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>Files</h3>
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+                        <tbody>
+                            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/api/projects/:id/files</code></td><td>Get file tree</td></tr>
+                            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/api/projects/:id/files/content?path=</code></td><td>Get file content</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/projects/:id/files/save</code></td><td>Save file</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/projects/:id/files/create</code></td><td>Create file/folder</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/projects/:id/files/delete</code></td><td>Delete file/folder</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/projects/:id/files/rename</code></td><td>Rename file/folder</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>AI</h3>
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+                        <tbody>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/ai/generate</code></td><td>Generate / debug / explain code</td></tr>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/ai/agent</code></td><td>Autonomous agent (build project)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h2 id="languages">Supported Languages</h2>
+                <p>YubiLab provides starter templates for each language when you create a project:</p>
+                <ul>
+                    <li><strong>Python</strong> - main.py</li>
+                    <li><strong>JavaScript</strong> - index.js</li>
+                    <li><strong>HTML/CSS/JS</strong> - index.html, style.css, script.js</li>
+                    <li><strong>C</strong> - main.c</li>
+                    <li><strong>C++</strong> - main.cpp</li>
+                    <li><strong>Java</strong> - Main.java</li>
+                    <li><strong>Go</strong> - main.go</li>
+                    <li><strong>PHP</strong> - index.php</li>
+                    <li><strong>Rust</strong> - main.rs</li>
+                </ul>
+
+                <h2 id="shortcuts">Keyboard Shortcuts</h2>
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+                        <tbody>
+                            <tr><td><span class="kbd">Ctrl+S</span></td><td>Save current file</td></tr>
+                            <tr><td><span class="kbd">Ctrl+Enter</span></td><td>Run code</td></tr>
+                            <tr><td><span class="kbd">Ctrl+`</span></td><td>Toggle terminal</td></tr>
+                            <tr><td><span class="kbd">Ctrl+B</span></td><td>Toggle AI panel</td></tr>
+                            <tr><td><span class="kbd">Escape</span></td><td>Close dialogs</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="margin-top:48px;padding:24px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-md);">
+                    <p style="margin-bottom:0;"><strong>Built with YubiLab</strong> by Devopod Private Limited. Powered by YubiAI GPT-OSS 120B.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Check auth
+        fetch('/api/auth/me', {credentials:'include'}).then(r => { if (!r.ok) location.href = '/login'; });
+        // Smooth scroll for nav links
+        document.querySelectorAll('.docs-nav a').forEach(a => {
+            a.addEventListener('click', e => {
+                e.preventDefault();
+                const id = a.getAttribute('href').substring(1);
+                document.getElementById(id)?.scrollIntoView({behavior:'smooth'});
+                document.querySelectorAll('.docs-nav a').forEach(n => n.classList.remove('active'));
+                a.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>

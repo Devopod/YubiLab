@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YubiLab - Dashboard</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <div class="dashboard-header">
+            <div class="logo"><a href="/" style="text-decoration:none;background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">YubiLab</a></div>
+            <div class="header-right">
+                <a href="/docs" class="btn btn-ghost btn-sm">Docs</a>
+                <a href="/api-keys" class="btn btn-ghost btn-sm">API Keys</a>
+                <a href="/settings" class="btn btn-ghost btn-sm">Settings</a>
+                <div class="user-info">
+                    <div class="user-avatar" id="user-avatar">U</div>
+                    <span id="user-name">User</span>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="handleLogout()">Logout</button>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="dashboard-content">
+            <div class="dashboard-title">
+                <h2>My Projects</h2>
+                <button class="btn btn-primary" onclick="showCreateModal()">
+                    <span>+</span> New Project
+                </button>
+            </div>
+
+            <div class="projects-grid" id="projects-grid">
+                <!-- Projects loaded dynamically -->
+            </div>
+
+            <div id="empty-state" style="display:none; text-align:center; padding:80px 20px; color:var(--text-muted);">
+                <div style="font-size:3rem; margin-bottom:16px; opacity:0.3;">📁</div>
+                <h3 style="color:var(--text-secondary); margin-bottom:8px;">No projects yet</h3>
+                <p>Create your first project to get started!</p>
+            </div>
+
+            <!-- Deployments Management Section -->
+            <div class="dashboard-title" style="margin-top:40px;">
+                <h2>Deployments</h2>
+                <button class="btn btn-ghost btn-sm" onclick="loadDashboardDeployments()" title="Refresh">🔄 Refresh</button>
+            </div>
+
+            <div id="deployments-section">
+                <div id="dashboard-deployments" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;">
+                    <!-- Deployments loaded dynamically -->
+                </div>
+                <div id="deployments-empty" style="display:none; text-align:center; padding:40px 20px; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:8px; opacity:0.3;">🚀</div>
+                    <p>No active deployments</p>
+                    <p style="font-size:0.8rem;">Open a project and click Deploy to get started</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Project Modal -->
+    <div class="modal-overlay" id="create-modal">
+        <div class="modal">
+            <h3>Create New Project</h3>
+            <form onsubmit="handleCreateProject(event)">
+                <div class="auth-form">
+                    <div class="form-group">
+                        <label>Project Name</label>
+                        <input type="text" id="project-name" placeholder="my-awesome-project" required maxlength="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Language</label>
+                        <select id="project-language">
+                            <option value="python">🐍 Python</option>
+                            <option value="javascript">🟨 JavaScript</option>
+                            <option value="html">🌐 HTML/CSS/JS</option>
+                            <option value="c">⚙️ C</option>
+                            <option value="cpp">⚙️ C++</option>
+                            <option value="java">☕ Java</option>
+                            <option value="go">🐹 Go</option>
+                            <option value="php">🐘 PHP</option>
+                            <option value="rust">🦀 Rust</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Description (optional)</label>
+                        <input type="text" id="project-desc" placeholder="A short description">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-ghost" onclick="hideCreateModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Project</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YubiLab - API Keys</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        .page-body { overflow-y: auto; }
+        .page-content { max-width: 900px; margin: 0 auto; padding: 32px; }
+        .page-content h1 { font-size: 1.8rem; margin-bottom: 8px; }
+        .page-content .subtitle { color: var(--text-secondary); margin-bottom: 32px; }
+        .key-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+        .key-info { display: flex; flex-direction: column; gap: 4px; }
+        .key-name { font-weight: 600; font-size: 0.95rem; }
+        .key-prefix { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); }
+        .key-meta { font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 16px; margin-top: 4px; }
+        .key-actions { display: flex; gap: 8px; }
+        .new-key-banner { background: rgba(63,185,80,0.1); border: 1px solid var(--accent-green); border-radius: var(--radius-md); padding: 16px 20px; margin-bottom: 24px; display: none; }
+        .new-key-banner .label { color: var(--accent-green); font-weight: 600; margin-bottom: 8px; font-size: 0.9rem; }
+        .new-key-banner .key-value { font-family: var(--font-mono); font-size: 0.9rem; background: var(--bg-primary); padding: 10px 14px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: space-between; gap: 12px; word-break: break-all; }
+        .new-key-banner .warning { color: var(--accent-yellow); font-size: 0.8rem; margin-top: 8px; }
+        .empty-keys { text-align: center; padding: 48px 20px; color: var(--text-muted); }
+        .empty-keys .icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.3; }
+        .create-key-form { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 24px; margin-bottom: 24px; display: none; }
+        .create-key-form h3 { margin-bottom: 16px; }
+    </style>
+</head>
+<body class="page-body">
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <div class="logo"><a href="/" style="text-decoration:none;background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">YubiLab</a></div>
+            <div class="header-right">
+                <a href="/" class="btn btn-ghost btn-sm">Dashboard</a>
+                <a href="/docs" class="btn btn-ghost btn-sm">Docs</a>
+                <a href="/api-keys" class="btn btn-ghost btn-sm" style="color:var(--accent-blue);">API Keys</a>
+                <a href="/settings" class="btn btn-ghost btn-sm">Settings</a>
+                <button class="btn btn-ghost btn-sm" onclick="fetch('/api/auth/logout',{method:'POST',credentials:'include'}).then(()=>location.href='/login')">Logout</button>
+            </div>
+        </div>
+
+        <div class="page-content">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <h1>API Keys</h1>
+                <button class="btn btn-primary" onclick="toggleCreateForm()">+ Create Key</button>
+            </div>
+            <p class="subtitle">Manage your API keys for programmatic access to YubiLab</p>
+
+            <div class="new-key-banner" id="new-key-banner">
+                <div class="label">API Key Created!</div>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:8px;">Copy this key now. You won't be able to see it again.</p>
+                <div class="key-value">
+                    <span id="new-key-value"></span>
+                    <button class="btn btn-ghost btn-sm" onclick="copyKey()">Copy</button>
+                </div>
+                <div class="warning">Store this key securely. It will not be shown again.</div>
+                <button class="btn btn-ghost btn-sm" style="margin-top:12px;" onclick="document.getElementById('new-key-banner').style.display='none'">Dismiss</button>
+            </div>
+
+            <div class="create-key-form" id="create-form">
+                <h3>Create New API Key</h3>
+                <div class="auth-form">
+                    <div class="form-group">
+                        <label>Key Name</label>
+                        <input type="text" id="key-name" placeholder="e.g., My App Key" required>
+                    </div>
+                </div>
+                <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                    <button class="btn btn-ghost" onclick="toggleCreateForm()">Cancel</button>
+                    <button class="btn btn-primary" onclick="createKey()">Create Key</button>
+                </div>
+            </div>
+
+            <div id="keys-list"></div>
+
+            <div class="empty-keys" id="empty-keys" style="display:none;">
+                <div class="icon">&#128273;</div>
+                <h3 style="color:var(--text-secondary);margin-bottom:8px;">No API keys yet</h3>
+                <p>Create an API key to access YubiLab programmatically</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let currentUser = null;
+
+        async function init() {
+            const res = await fetch(API_BASE + '/api/auth/me', {credentials:'include'});
+            if (!res.ok) { location.href = '/login'; return; }
+            currentUser = await res.json();
+            loadKeys();
+        }
+
+        async function loadKeys() {
+            const res = await fetch(API_BASE + '/api/keys', {credentials:'include'});
+            if (!res.ok) {
+                document.getElementById('empty-keys').style.display = 'block';
+                return;
+            }
+            const keys = await res.json();
+            const list = document.getElementById('keys-list');
+            const empty = document.getElementById('empty-keys');
+            if (keys.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+            list.innerHTML = keys.map(k => `
+                <div class="key-card">
+                    <div class="key-info">
+                        <div class="key-name">${escapeHtml(k.key_name)}</div>
+                        <div class="key-prefix">${escapeHtml(k.key_prefix)}...</div>
+                        <div class="key-meta">
+                            <span>Used ${k.usage_count} times</span>
+                            <span>Created ${new Date(k.created_at).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                    <div class="key-actions">
+                        <button class="btn btn-danger btn-sm" onclick="deleteKey(${k.id})">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function toggleCreateForm() {
+            const form = document.getElementById('create-form');
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function createKey() {
+            const name = document.getElementById('key-name').value.trim();
+            if (!name) { showToast('Enter a key name', 'error'); return; }
+            const res = await fetch(API_BASE + '/api/keys', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                credentials: 'include',
+                body: JSON.stringify({key_name: name})
+            });
+            if (!res.ok) { showToast('Failed to create key', 'error'); return; }
+            const data = await res.json();
+            document.getElementById('new-key-value').textContent = data.api_key;
+            document.getElementById('new-key-banner').style.display = 'block';
+            document.getElementById('key-name').value = '';
+            toggleCreateForm();
+            loadKeys();
+        }
+
+        async function deleteKey(id) {
+            if (!confirm('Delete this API key? This cannot be undone.')) return;
+            await fetch(API_BASE + '/api/keys/' + id, {method:'DELETE', credentials:'include'});
+            loadKeys();
+        }
+
+        function copyKey() {
+            const val = document.getElementById('new-key-value').textContent;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied!'));
+        }
+
+        function showToast(msg, type='success') {
+            const c = document.getElementById('toast-container');
+            const t = document.createElement('div');
+            t.className = 'toast toast-' + type;
+            t.textContent = msg;
+            t.style.cssText = 'background:var(--bg-secondary);border:1px solid var(--border-color);padding:12px 20px;border-radius:var(--radius-sm);margin-top:8px;color:var(--text-primary);font-size:0.9rem;box-shadow:var(--shadow);';
+            if (type === 'error') t.style.borderColor = 'var(--accent-red)';
+            c.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+
+        function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+        init();
+    </script>
+</body>
+</html>

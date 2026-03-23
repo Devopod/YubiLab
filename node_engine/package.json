@@ -1,0 +1,17 @@
+{
+  "name": "yubilab-node-engine",
+  "version": "1.0.0",
+  "description": "YubiLab Code Execution Engine & Terminal Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "node-pty": "^1.0.0",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.0"
+  }
+}
