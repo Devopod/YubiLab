@@ -1127,13 +1127,14 @@ async function agentDeploy() {
         });
         const data = await res.json();
         if (res.ok) {
-            showToast(`Deployed on port ${data.port}!`, 'success');
+            showToast(data.ready ? `Deployed and ready on port ${data.port}!` : `Deployed on port ${data.port} (starting...)`, data.ready ? 'success' : 'info');
             setStatus(`Deployed (port ${data.port})`);
             addAIMessage(`✅ Deployed successfully!\nPort: ${data.port}\nURL: ${window.location.origin}${data.url}\n\nOpening preview...`, 'system');
+            const agentDelay = data.ready ? 200 : 2000;
             setTimeout(() => {
                 document.getElementById('preview-frame').src = `${data.url}?t=${Date.now()}`;
                 switchBottomTab('preview');
-            }, 2000);
+            }, agentDelay);
             loadDeployments();
         } else {
             showToast(data.error || 'Deploy failed', 'error');
@@ -1290,12 +1291,13 @@ async function deployProject() {
             appendConsole(`URL: ${window.location.origin}${data.url}\n`, 'info');
             appendConsole(`\nOpening preview...\n`, 'info');
 
-            // Wait a bit for the server to start, then show preview
+            // Show preview immediately if ready, otherwise short delay
+            const delay = data.ready ? 200 : 2000;
             setTimeout(() => {
                 const frame = document.getElementById('preview-frame');
                 frame.src = `${data.url}?t=${Date.now()}`;
                 switchBottomTab('preview');
-            }, 2000);
+            }, delay);
 
             // Also refresh deployments panel
             loadDeployments();

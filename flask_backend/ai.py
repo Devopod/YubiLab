@@ -54,7 +54,7 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
             return {"error": "YubiAI API authentication failed. Check your API key."}
         if resp.status_code == 429:
             return {"error": "YubiAI API rate limit exceeded. Please wait and try again."}
-        return {"error": f"YubiAI API error (HTTP {resp.status_code}). The server may be temporarily unavailable."}
+        return {"error": f"YubiAI API returned HTTP {resp.status_code}. Please check that the YubiAI server is running and the API URL is correct ({YUBIAI_API_URL})."}
     except requests.exceptions.ConnectionError:
         return {"error": "Cannot connect to YubiAI API. The server appears to be offline. Check if the ngrok tunnel is running."}
     except requests.exceptions.Timeout:
