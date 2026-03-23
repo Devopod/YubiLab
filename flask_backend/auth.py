@@ -139,3 +139,52 @@ def me():
             'email': user['email']
         }
     })
+
+
+@auth_bp.route('/api/auth/delete-account', methods=['POST'])
+def delete_account():
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Authentication required'}), 401
+
+    data = request.get_json()
+    password = data.get('password', '')
+
+    if not password:
+        return jsonify({'error': 'Password is required'}), 400
+
+    # Verify password
+    if not check_password_hash(user['password_hash'], password):
+        return jsonify({'error': 'Incorrect password'}), 403
+
+    user_id = user['id']
+    import shutil
+
+    conn = get_db()
+    try:
+        # Delete all user data from database
+        conn.execute('DELETE FROM deployments WHERE user_id = ?', (user_id,))
+        conn.execute('DELETE FROM ai_conversations WHERE user_id = ?', (user_id,))
+        conn.execute('DELETE FROM api_keys WHERE user_id = ?', (user_id,))
+        conn.execute('DELETE FROM files WHERE project_id IN (SELECT id FROM projects WHERE user_id = ?)', (user_id,))
+        conn.execute('DELETE FROM projects WHERE user_id = ?', (user_id,))
+        conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': f'Failed to delete account data: {str(e)}'}), 500
+    finally:
+        conn.close()
+
+    # Delete user workspace directory
+    user_workspace = os.path.join(WORKSPACES_DIR, str(user_id))
+    if os.path.exists(user_workspace):
+        try:
+            shutil.rmtree(user_workspace)
+        except Exception as e:
+            print(f"Warning: Could not delete workspace for user {user_id}: {e}")
+
+    # Clear session
+    session.clear()
+
+    return jsonify({'message': 'Account deleted successfully'})
