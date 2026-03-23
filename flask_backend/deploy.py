@@ -73,8 +73,65 @@ def detect_run_command(project_path, language):
         if 'app.js' in files:
             return 'node app.js'
 
+    if language == 'php' or any(f.endswith('.php') for f in files):
+        # Check for composer.json
+        if 'composer.json' in files:
+            return 'composer install --no-interaction && php -S 0.0.0.0:{port} -t .'
+        if 'index.php' in files:
+            return 'php -S 0.0.0.0:{port} -t .'
+        for f in files:
+            if f.endswith('.php'):
+                return 'php -S 0.0.0.0:{port} -t .'
+
+    if language == 'go' or any(f.endswith('.go') for f in files):
+        if 'go.mod' in files:
+            return 'go run .'
+        if 'main.go' in files:
+            return 'go run main.go'
+        for f in files:
+            if f.endswith('.go'):
+                return f'go run {f}'
+
+    if language == 'java' or any(f.endswith('.java') for f in files):
+        if 'pom.xml' in files:
+            return 'mvn spring-boot:run -Dserver.port={port}'
+        if 'build.gradle' in files:
+            return 'gradle bootRun --args="--server.port={port}"'
+        for f in files:
+            if f.endswith('.java'):
+                name = f.replace('.java', '')
+                return f'javac {f} && java {name}'
+
+    if language == 'ruby' or any(f.endswith('.rb') for f in files):
+        if 'Gemfile' in files:
+            return 'bundle install && bundle exec ruby app.rb -p {port} -o 0.0.0.0'
+        if 'app.rb' in files:
+            return 'ruby app.rb'
+        if 'config.ru' in files:
+            return 'bundle install && bundle exec rackup -p {port} -o 0.0.0.0'
+        for f in files:
+            if f.endswith('.rb'):
+                return f'ruby {f}'
+
+    if language == 'rust' or 'Cargo.toml' in files:
+        return 'cargo run'
+
     if language == 'html':
         return 'python3 -m http.server {port}'
+
+    # Fallback: try to detect by file extensions
+    for f in files:
+        ext = f.rsplit('.', 1)[-1] if '.' in f else ''
+        if ext == 'py':
+            return f'python3 {f}'
+        if ext == 'js':
+            return f'node {f}'
+        if ext == 'php':
+            return 'php -S 0.0.0.0:{port} -t .'
+        if ext == 'rb':
+            return f'ruby {f}'
+        if ext == 'go':
+            return f'go run {f}'
 
     return None
 

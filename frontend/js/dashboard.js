@@ -3,7 +3,7 @@
 
 const LANG_ICONS = {
     python: '🐍', javascript: '🟨', html: '🌐', c: '⚙️', cpp: '⚙️',
-    java: '☕', go: '🐹', php: '🐘', rust: '🦀'
+    java: '☕', go: '🐹', php: '🐘', rust: '🦀', ruby: '💎'
 };
 
 let currentUser = null;

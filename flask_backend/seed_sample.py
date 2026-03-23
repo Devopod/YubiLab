@@ -482,6 +482,393 @@ class TestCSRF:
 }
 
 
+NODEJS_TODO_FILES = {
+    'package.json': '''{
+  "name": "nodejs-todo-app",
+  "version": "1.0.0",
+  "description": "A simple Node.js Todo List web app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
+''',
+    'server.js': '''const express = require('express');
+const path = require('path');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+let todos = [
+    { id: 1, text: 'Learn Node.js', done: false },
+    { id: 2, text: 'Build a Todo App', done: true },
+    { id: 3, text: 'Deploy on YubiLab', done: false },
+];
+let nextId = 4;
+
+app.get('/api/todos', (req, res) => res.json(todos));
+
+app.post('/api/todos', (req, res) => {
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
+    const todo = { id: nextId++, text: text.trim(), done: false };
+    todos.push(todo);
+    res.status(201).json(todo);
+});
+
+app.put('/api/todos/:id', (req, res) => {
+    const todo = todos.find(t => t.id === parseInt(req.params.id));
+    if (!todo) return res.status(404).json({ error: 'Not found' });
+    if (req.body.text !== undefined) todo.text = req.body.text;
+    if (req.body.done !== undefined) todo.done = req.body.done;
+    res.json(todo);
+});
+
+app.delete('/api/todos/:id', (req, res) => {
+    todos = todos.filter(t => t.id !== parseInt(req.params.id));
+    res.json({ status: 'deleted' });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Todo app running on http://0.0.0.0:${PORT}`);
+});
+''',
+    'public/index.html': '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node.js Todo App</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); color: #e6edf3; min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; padding: 40px 16px; }
+        .container { background: rgba(255,255,255,0.05); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 32px; width: 100%; max-width: 500px; }
+        h1 { text-align: center; margin-bottom: 24px; background: linear-gradient(135deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .input-row { display: flex; gap: 8px; margin-bottom: 20px; }
+        input[type="text"] { flex: 1; padding: 12px 16px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.3); color: #e6edf3; font-size: 15px; outline: none; }
+        input[type="text"]:focus { border-color: #58a6ff; }
+        button { padding: 12px 20px; border: none; border-radius: 10px; background: linear-gradient(135deg, #58a6ff, #4c9aed); color: white; font-weight: 600; cursor: pointer; transition: transform 0.2s; }
+        button:hover { transform: translateY(-2px); }
+        .todo-item { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 10px; margin-bottom: 8px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); }
+        .todo-item.done span { text-decoration: line-through; opacity: 0.5; }
+        .todo-item span { flex: 1; }
+        .todo-item input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
+        .del-btn { background: linear-gradient(135deg, #f85149, #e04040); padding: 6px 12px; font-size: 13px; }
+        .empty { text-align: center; color: #8b949e; padding: 40px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Todo List</h1>
+        <div class="input-row">
+            <input type="text" id="todo-input" placeholder="What needs to be done?">
+            <button onclick="addTodo()">Add</button>
+        </div>
+        <div id="todo-list"></div>
+    </div>
+    <script>
+        async function loadTodos() {
+            const res = await fetch('/api/todos');
+            const todos = await res.json();
+            const list = document.getElementById('todo-list');
+            if (!todos.length) { list.innerHTML = '<div class="empty">No todos yet. Add one above!</div>'; return; }
+            list.innerHTML = todos.map(t => `
+                <div class="todo-item ${t.done ? 'done' : ''}">
+                    <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTodo(${t.id}, this.checked)">
+                    <span>${t.text}</span>
+                    <button class="del-btn" onclick="deleteTodo(${t.id})">X</button>
+                </div>
+            `).join('');
+        }
+        async function addTodo() {
+            const input = document.getElementById('todo-input');
+            const text = input.value.trim();
+            if (!text) return;
+            await fetch('/api/todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+            input.value = '';
+            loadTodos();
+        }
+        async function toggleTodo(id, done) {
+            await fetch('/api/todos/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done }) });
+            loadTodos();
+        }
+        async function deleteTodo(id) {
+            await fetch('/api/todos/' + id, { method: 'DELETE' });
+            loadTodos();
+        }
+        document.getElementById('todo-input').addEventListener('keypress', e => { if (e.key === 'Enter') addTodo(); });
+        loadTodos();
+    </script>
+</body>
+</html>
+''',
+}
+
+PHP_CONTACT_FILES = {
+    'index.php': '''<?php
+$name = $email = $message = $status = "";
+
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $name = htmlspecialchars(trim($_POST["name"] ?? ""));
+    $email = htmlspecialchars(trim($_POST["email"] ?? ""));
+    $message = htmlspecialchars(trim($_POST["message"] ?? ""));
+
+    if (empty($name) || empty($email) || empty($message)) {
+        $status = "error";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $status = "invalid_email";
+    } else {
+        $status = "success";
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PHP Contact Form</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); color: #e6edf3; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 32px; width: 100%; max-width: 480px; }
+        h2 { text-align: center; margin-bottom: 24px; background: linear-gradient(135deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        label { display: block; margin-bottom: 6px; font-size: 0.9rem; color: #8b949e; }
+        input, textarea { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.3); color: #e6edf3; font-size: 15px; margin-bottom: 16px; outline: none; font-family: inherit; }
+        input:focus, textarea:focus { border-color: #58a6ff; }
+        textarea { min-height: 100px; resize: vertical; }
+        button { width: 100%; padding: 14px; border: none; border-radius: 10px; background: linear-gradient(135deg, #58a6ff, #4c9aed); color: white; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s; }
+        button:hover { transform: translateY(-2px); }
+        .msg { padding: 12px; border-radius: 10px; margin-bottom: 16px; text-align: center; }
+        .msg.success { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+        .msg.error { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Contact Form</h2>
+        <?php if ($status === "success"): ?>
+            <div class="msg success">Thank you, <?= $name ?>! Your message has been received.</div>
+        <?php elseif ($status === "error"): ?>
+            <div class="msg error">All fields are required.</div>
+        <?php elseif ($status === "invalid_email"): ?>
+            <div class="msg error">Please enter a valid email address.</div>
+        <?php endif; ?>
+        <form method="POST">
+            <label>Name</label>
+            <input type="text" name="name" value="<?= $name ?>" placeholder="Your name" required>
+            <label>Email</label>
+            <input type="email" name="email" value="<?= $email ?>" placeholder="you@example.com" required>
+            <label>Message</label>
+            <textarea name="message" placeholder="Write your message..."><?= $message ?></textarea>
+            <button type="submit">Send Message</button>
+        </form>
+    </div>
+</body>
+</html>
+''',
+}
+
+GO_HELLO_FILES = {
+    'main.go': '''package main
+
+import (
+\t"encoding/json"
+\t"fmt"
+\t"log"
+\t"math/rand"
+\t"net/http"
+\t"os"
+\t"time"
+)
+
+type Quote struct {
+\tText   string `json:"text"`
+\tAuthor string `json:"author"`
+}
+
+var quotes = []Quote{
+\t{"The only way to do great work is to love what you do.", "Steve Jobs"},
+\t{"Code is like humor. When you have to explain it, it's bad.", "Cory House"},
+\t{"First, solve the problem. Then, write the code.", "John Johnson"},
+\t{"Simplicity is the soul of efficiency.", "Austin Freeman"},
+\t{"Make it work, make it right, make it fast.", "Kent Beck"},
+\t{"Any fool can write code that a computer can understand.", "Martin Fowler"},
+}
+
+func main() {
+\tport := os.Getenv("PORT")
+\tif port == "" {
+\t\tport = "3000"
+\t}
+
+\thttp.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+\t\tw.Header().Set("Content-Type", "text/html")
+\t\tq := quotes[rand.Intn(len(quotes))]
+\t\tfmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Go Quote Server</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',sans-serif;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);color:#e6edf3;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
+.card{background:rgba(255,255,255,0.05);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:40px;max-width:500px;text-align:center}
+h1{margin-bottom:24px;background:linear-gradient(135deg,#58a6ff,#bc8cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+blockquote{font-size:1.3rem;font-style:italic;margin:20px 0;line-height:1.6;color:#c9d1d9}
+.author{color:#8b949e;font-size:0.95rem}
+a{display:inline-block;margin-top:20px;padding:12px 28px;background:linear-gradient(135deg,#58a6ff,#4c9aed);color:white;text-decoration:none;border-radius:10px;font-weight:600;transition:transform 0.2s}
+a:hover{transform:translateY(-2px)}
+</style></head><body><div class="card">
+<h1>Go Quote Server</h1>
+<blockquote>"%s"</blockquote>
+<p class="author">- %s</p>
+<a href="/">New Quote</a>
+</div></body></html>`, q.Text, q.Author)
+\t})
+
+\thttp.HandleFunc("/api/quote", func(w http.ResponseWriter, r *http.Request) {
+\t\tw.Header().Set("Content-Type", "application/json")
+\t\tq := quotes[rand.Intn(len(quotes))]
+\t\tjson.NewEncoder(w).Encode(q)
+\t})
+
+\tlog.Printf("Go server starting on port %s", port)
+\tlog.Fatal(http.ListenAndServe("0.0.0.0:"+port, nil))
+}
+
+func init() {
+\trand.Seed(time.Now().UnixNano())
+}
+''',
+}
+
+JAVA_HELLO_FILES = {
+    'Main.java': '''import java.util.Scanner;
+
+public class Main {
+    static final String[] COLORS = {
+        "\\033[31m", "\\033[32m", "\\033[33m", "\\033[34m", "\\033[35m", "\\033[36m"
+    };
+    static final String RESET = "\\033[0m";
+
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+
+        System.out.println(COLORS[3] + "================================" + RESET);
+        System.out.println(COLORS[4] + "  Java Number Guessing Game" + RESET);
+        System.out.println(COLORS[3] + "================================" + RESET);
+        System.out.println();
+
+        int secret = (int) (Math.random() * 100) + 1;
+        int attempts = 0;
+        int maxAttempts = 7;
+
+        System.out.println("I'm thinking of a number between 1 and 100.");
+        System.out.println("You have " + maxAttempts + " attempts. Good luck!");
+        System.out.println();
+
+        while (attempts < maxAttempts) {
+            attempts++;
+            System.out.print(COLORS[5] + "Attempt " + attempts + "/" + maxAttempts + ": " + RESET);
+
+            if (!scanner.hasNextInt()) {
+                System.out.println(COLORS[0] + "Please enter a valid number!" + RESET);
+                scanner.next();
+                attempts--;
+                continue;
+            }
+
+            int guess = scanner.nextInt();
+
+            if (guess == secret) {
+                System.out.println();
+                System.out.println(COLORS[1] + "Congratulations! You guessed it in " + attempts + " attempts!" + RESET);
+                System.out.println(COLORS[1] + "The number was: " + secret + RESET);
+                scanner.close();
+                return;
+            } else if (guess < secret) {
+                System.out.println(COLORS[2] + "Too low! Try higher." + RESET);
+            } else {
+                System.out.println(COLORS[0] + "Too high! Try lower." + RESET);
+            }
+        }
+
+        System.out.println();
+        System.out.println(COLORS[0] + "Game Over! The number was: " + secret + RESET);
+        scanner.close();
+    }
+}
+''',
+}
+
+RUBY_HELLO_FILES = {
+    'main.rb': '''# Ruby - Interactive Greeting Generator
+# Run this to see colorful output!
+
+class Greeter
+  COLORS = {
+    red: "\\e[31m", green: "\\e[32m", yellow: "\\e[33m",
+    blue: "\\e[34m", magenta: "\\e[35m", cyan: "\\e[36m",
+  }
+  RESET = "\\e[0m"
+
+  def initialize(name)
+    @name = name
+    @greetings = [
+      "Hello, #{name}! Welcome to Ruby on YubiLab!",
+      "Greetings, #{name}! Ruby is elegant and fun!",
+      "Hey #{name}! Let's write some beautiful Ruby code!",
+      "Welcome #{name}! Ruby makes developers happy!",
+    ]
+  end
+
+  def colorize(text, color)
+    "#{COLORS[color]}#{text}#{RESET}"
+  end
+
+  def greet
+    greeting = @greetings.sample
+    color = COLORS.keys.sample
+    colorize(greeting, color)
+  end
+
+  def ascii_art
+    <<~ART
+      #{colorize("  ____        _           ", :red)}
+      #{colorize(" |  _ \\ _   _| |__  _   _ ", :yellow)}
+      #{colorize(" | |_) | | | | '_ \\| | | |", :green)}
+      #{colorize(" |  _ <| |_| | |_) | |_| |", :cyan)}
+      #{colorize(" |_| \\_\\\\__,_|_.__/ \\__, |", :blue)}
+      #{colorize("                    |___/ ", :magenta)}
+    ART
+  end
+end
+
+# Main
+puts ""
+greeter = Greeter.new("Developer")
+puts greeter.ascii_art
+puts ""
+5.times do |i|
+  puts "  #{i + 1}. #{greeter.greet}"
+end
+puts ""
+puts greeter.colorize("  Happy coding with Ruby on YubiLab!", :green)
+puts ""
+
+# Fibonacci with Ruby elegance
+fib = [0, 1]
+8.times { fib << fib[-1] + fib[-2] }
+puts greeter.colorize("  Fibonacci: #{fib.join(', ')}", :cyan)
+puts ""
+''',
+}
+
 SAMPLE_FILES = {
     'index.html': '''<!DOCTYPE html>
 <html lang="en">
@@ -693,16 +1080,46 @@ def seed_sample_project(user_id):
 
     projects_to_seed = [
         {
-            'name': 'sample-project',
-            'language': 'html',
-            'description': 'Welcome to YubiLab! A sample project to get you started.',
-            'files': SAMPLE_FILES,
-        },
-        {
             'name': 'flask-calculator',
             'language': 'python',
             'description': 'A responsive Flask calculator web app with safe expression evaluation.',
             'files': CALCULATOR_FILES,
+        },
+        {
+            'name': 'nodejs-todo-app',
+            'language': 'javascript',
+            'description': 'A Node.js + Express Todo List web app with REST API.',
+            'files': NODEJS_TODO_FILES,
+        },
+        {
+            'name': 'php-contact-form',
+            'language': 'php',
+            'description': 'A PHP contact form with validation and responsive UI.',
+            'files': PHP_CONTACT_FILES,
+        },
+        {
+            'name': 'go-quote-server',
+            'language': 'go',
+            'description': 'A Go web server that serves random programming quotes.',
+            'files': GO_HELLO_FILES,
+        },
+        {
+            'name': 'java-guessing-game',
+            'language': 'java',
+            'description': 'A Java number guessing game. Run in terminal!',
+            'files': JAVA_HELLO_FILES,
+        },
+        {
+            'name': 'ruby-greeter',
+            'language': 'ruby',
+            'description': 'A Ruby greeting generator with colorful ASCII art.',
+            'files': RUBY_HELLO_FILES,
+        },
+        {
+            'name': 'sample-project',
+            'language': 'html',
+            'description': 'Welcome to YubiLab! A sample HTML project to get you started.',
+            'files': SAMPLE_FILES,
         },
     ]
 
@@ -732,24 +1149,16 @@ def seed_sample_project(user_id):
     return created_ids
 
 
-def seed_calculator_for_existing_users():
-    """Seed the flask-calculator project for all existing users who don't have it."""
+def seed_all_samples_for_existing_users():
+    """Seed all sample projects for all existing users who don't have them."""
     conn = get_db()
     users = conn.execute('SELECT id FROM users').fetchall()
     conn.close()
 
     count = 0
     for user in users:
-        conn2 = get_db()
-        existing = conn2.execute(
-            'SELECT id FROM projects WHERE user_id = ? AND name = ?',
-            (user['id'], 'flask-calculator')
-        ).fetchone()
-        conn2.close()
-
-        if not existing:
-            seed_sample_project(user['id'])
-            count += 1
+        seed_sample_project(user['id'])
+        count += 1
 
     return count
 
@@ -757,8 +1166,8 @@ def seed_calculator_for_existing_users():
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         if sys.argv[1] == '--seed-all':
-            count = seed_calculator_for_existing_users()
-            print(f"Seeded calculator project for {count} existing users")
+            count = seed_all_samples_for_existing_users()
+            print(f"Seeded sample projects for {count} existing users")
         else:
             uid = int(sys.argv[1])
             ids = seed_sample_project(uid)
