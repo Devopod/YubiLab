@@ -228,6 +228,76 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Include proper loading spinners and skeleton screens"""
 
 
+# Planning-only system prompt for multi-request agent
+AGENT_PLAN_PROMPT = """You are YubiAI, an elite autonomous AI software engineer. Your task is to PLAN a project — list ALL files that need to be created, but DO NOT write the code yet.
+
+You MUST respond with ONLY a valid JSON object:
+{
+  "phase": "plan",
+  "roadmap": ["Step 1: ...", "Step 2: ..."],
+  "file_groups": [
+    {
+      "group_name": "Backend Core",
+      "description": "Main application files, models, routes",
+      "files": ["app/__init__.py", "app/models.py", "app/routes.py", "app/auth.py"]
+    },
+    {
+      "group_name": "Templates",
+      "description": "HTML templates for all pages",
+      "files": ["app/templates/base.html", "app/templates/login.html", "app/templates/signup.html", "app/templates/chatbot.html"]
+    },
+    {
+      "group_name": "Static Assets & Config",
+      "description": "CSS, JavaScript, and configuration files",
+      "files": ["app/static/css/styles.css", "app/static/js/chatbot.js", "requirements.txt", "run.py", "README.md"]
+    }
+  ],
+  "run_command": "python run.py",
+  "test_command": "python -m py_compile run.py",
+  "install_command": "pip install -r requirements.txt",
+  "deploy_ready": true,
+  "message": "Planning complete: X files in Y groups"
+}
+
+RULES:
+- Group related files together (e.g., backend, templates, static, config)
+- Each group should have 2-5 files max (for token efficiency)
+- List EVERY file the project needs — don't skip any
+- Include config files (requirements.txt, package.json, etc.)
+- Include proper run_command, test_command, and install_command
+- Port rules: NEVER use 5000 or 3001. Use PORT env var, default 3002.
+- For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))"""
+
+
+# Batch generation prompt for multi-request agent
+AGENT_BATCH_PROMPT = """You are YubiAI, an elite autonomous AI software engineer. Generate the COMPLETE code for the specified files ONLY.
+
+You MUST respond with ONLY a valid JSON object:
+{
+  "phase": "build",
+  "files": [
+    {
+      "path": "relative/path/to/file.ext",
+      "content": "COMPLETE file content — every line, every import",
+      "action": "create"
+    }
+  ],
+  "message": "Generated X files for [group name]"
+}
+
+RULES:
+- Generate ONLY the files listed in the request — no extras
+- Each file must have COMPLETE content — no placeholders, no "..." or "TODO"
+- Include ALL imports, ALL functions, ALL HTML, ALL CSS — everything
+- Code must be production-ready, clean, and well-commented
+- Follow PEP-8 for Python, standard conventions for other languages
+- Port rules: NEVER use 5000 or 3001. Use PORT env var, default 3002.
+- For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))
+- Use modern, responsive UI with gradients, shadows, and glassmorphism
+- Include proper error handling in every file
+- Make sure cross-file imports are correct (e.g., from app.models import User)"""
+
+
 @ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['GET'])
 @login_required
 def get_conversations(user, project_id):
@@ -391,12 +461,35 @@ def apply_file_changes(project_path, files_list):
     return created_files, errors
 
 
+def estimate_project_size(prompt):
+    """Estimate if a project is large (needs multi-request) based on the prompt."""
+    large_indicators = [
+        'registration', 'login', 'signup', 'sign-up', 'authentication',
+        'chatbot', 'chat interface', 'dashboard', 'admin',
+        'database', 'sqlalchemy', 'models', 'migrations',
+        'full-stack', 'fullstack', 'production-ready', 'production ready',
+        'responsive', 'mobile', 'tablet', 'desktop',
+        'csrf', 'bcrypt', 'jwt', 'session',
+        'templates', 'base.html', 'multiple pages',
+        'unit test', 'pytest', 'testing',
+        'readme', 'documentation',
+        'saas', 'e-commerce', 'ecommerce', 'marketplace',
+        'api', 'rest api', 'crud',
+        'bootstrap', 'tailwind',
+    ]
+    prompt_lower = prompt.lower()
+    matches = sum(1 for indicator in large_indicators if indicator in prompt_lower)
+    # If 3+ indicators or prompt is very long, it's a large project
+    return matches >= 3 or len(prompt) > 1500
+
+
 @ai_bp.route('/api/ai/agent', methods=['POST'])
 @login_required
 def ai_agent(user):
-    """YubiAI Autonomous Agent — fully autonomous multi-loop agent.
-    Builds → Installs → Tests → Fixes (up to 3 loops) → Deploys → Verifies.
-    Returns all steps and results in a single response."""
+    """YubiAI Autonomous Agent — fully autonomous multi-request agent.
+    For small projects: single API call (plan + build together).
+    For large projects: multi-request (plan first, then batch-generate files).
+    Then: Install → Test → Fix (up to 3 loops) → Deploy → Verify."""
     data = request.get_json()
     prompt = data.get('prompt', '')
     project_id = data.get('project_id')
@@ -427,6 +520,9 @@ def ai_agent(user):
     run_command = ''
     deploy_ready = False
     MAX_FIX_LOOPS = 3
+    roadmap = []
+    install_cmd = ''
+    test_cmd = ''
 
     def add_step(name, status, detail='', duration=0):
         steps.append({'name': name, 'status': status, 'detail': detail, 'duration': round(duration, 1)})
@@ -438,9 +534,12 @@ def ai_agent(user):
              f'Found {len(file_list)} files' if file_list else 'Empty project',
              time.time() - step_start)
 
-    # === STEP 2: Call AI to plan & build ===
-    step_start = time.time()
+    # Decide: single-request (small) or multi-request (large)
+    is_large = estimate_project_size(prompt) and not error_context
+
     if error_context:
+        # ---- BUG FIX MODE (always single request) ----
+        step_start = time.time()
         full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
@@ -453,7 +552,136 @@ PREVIOUS ERROR OUTPUT:
 User request: Fix the error above. {prompt}
 
 IMPORTANT: Only modify files that need fixing. Do NOT regenerate files that are working correctly."""
-    else:
+        result = call_yubiai(full_prompt, system_prompt=AGENT_SYSTEM_PROMPT, max_tokens=32768)
+
+        if 'error' in result:
+            add_step('Calling YubiAI', 'failed', result['error'], time.time() - step_start)
+            return jsonify({'error': result['error'], 'steps': steps}), 500
+
+        response_text = result.get('response', '')
+        try:
+            agent_response = parse_agent_json(response_text)
+            if not agent_response:
+                add_step('Calling YubiAI', 'failed', 'Non-structured response', time.time() - step_start)
+                return jsonify({'response': response_text, 'agent_executed': False, 'steps': steps, 'message': 'AI returned non-structured response'})
+        except json.JSONDecodeError:
+            add_step('Calling YubiAI', 'failed', 'JSON parse error', time.time() - step_start)
+            return jsonify({'response': response_text, 'agent_executed': False, 'steps': steps, 'message': 'Could not parse AI response'})
+
+        roadmap = agent_response.get('roadmap', [])
+        run_command = agent_response.get('run_command', '')
+        install_cmd = agent_response.get('install_command', '')
+        test_cmd = agent_response.get('test_command', '')
+        add_step('Planning & generating fix', 'done',
+                 f'{len(agent_response.get("files", []))} files to fix',
+                 time.time() - step_start)
+
+        # Write fix files
+        step_start = time.time()
+        files_list = agent_response.get('files', [])
+        created_files, errors = apply_file_changes(project_path, files_list)
+        all_files.extend(created_files)
+        all_errors.extend(errors)
+        add_step('Writing files', 'done',
+                 f'{len(created_files)} files written',
+                 time.time() - step_start)
+
+    elif is_large:
+        # ---- MULTI-REQUEST MODE (for big projects) ----
+        # Phase 1: Plan only — get file groups
+        step_start = time.time()
+        plan_prompt = f"""Project: {project['name']} (Language: {project['language']})
+Project directory: {', '.join(file_list) if file_list else '(empty)'}
+
+User request: {prompt}
+
+Plan this project. List ALL files needed, grouped into logical batches. Do NOT write any code yet."""
+
+        plan_result = call_yubiai(plan_prompt, system_prompt=AGENT_PLAN_PROMPT, max_tokens=8192)
+
+        if 'error' in plan_result:
+            add_step('Planning project', 'failed', plan_result['error'], time.time() - step_start)
+            return jsonify({'error': plan_result['error'], 'steps': steps}), 500
+
+        try:
+            plan_response = parse_agent_json(plan_result.get('response', ''))
+            if not plan_response or not plan_response.get('file_groups'):
+                # Fallback: if plan doesn't have file_groups, treat as single-request
+                add_step('Planning project', 'done', 'Falling back to single-request mode', time.time() - step_start)
+                is_large = False  # Will fall through to single-request below
+                plan_response = None
+            else:
+                file_groups = plan_response.get('file_groups', [])
+                total_files = sum(len(g.get('files', [])) for g in file_groups)
+                roadmap = plan_response.get('roadmap', [])
+                run_command = plan_response.get('run_command', '')
+                install_cmd = plan_response.get('install_command', '')
+                test_cmd = plan_response.get('test_command', '')
+                add_step('Planning project', 'done',
+                         f'{total_files} files in {len(file_groups)} groups, {len(roadmap)} steps',
+                         time.time() - step_start)
+        except (json.JSONDecodeError, Exception) as e:
+            add_step('Planning project', 'done', f'Fallback to single-request: {str(e)[:50]}', time.time() - step_start)
+            is_large = False
+            plan_response = None
+
+        # Phase 2: Generate files in batches
+        if is_large and plan_response:
+            for group_idx, group in enumerate(file_groups):
+                step_start = time.time()
+                group_name = group.get('group_name', f'Batch {group_idx + 1}')
+                group_desc = group.get('description', '')
+                group_files = group.get('files', [])
+
+                if not group_files:
+                    continue
+
+                # Build context of already-generated files for cross-file imports
+                existing_files_ctx = ''
+                if all_files:
+                    existing_files_ctx, _ = get_project_files_context(project_path, max_file_size=3000)
+
+                batch_prompt = f"""Project: {project['name']} (Language: {project['language']})
+Full project plan: {json.dumps(roadmap)}
+All planned files: {json.dumps([f for g in file_groups for f in g.get('files', [])])}
+
+{'Already generated files (for import references):' + chr(10) + existing_files_ctx if existing_files_ctx else ''}
+
+User request: {prompt}
+
+Now generate COMPLETE code for these files ONLY:
+Group: {group_name} — {group_desc}
+Files to generate: {json.dumps(group_files)}
+
+Generate each file with full, production-ready code. Make sure imports reference files from other groups correctly."""
+
+                batch_result = call_yubiai(batch_prompt, system_prompt=AGENT_BATCH_PROMPT, max_tokens=32768)
+
+                if 'error' in batch_result:
+                    add_step(f'Generating {group_name}', 'failed', batch_result['error'], time.time() - step_start)
+                    all_errors.append(f'Failed to generate {group_name}: {batch_result["error"]}')
+                    continue
+
+                try:
+                    batch_response = parse_agent_json(batch_result.get('response', ''))
+                    if batch_response and batch_response.get('files'):
+                        batch_files = batch_response.get('files', [])
+                        created, errs = apply_file_changes(project_path, batch_files)
+                        all_files.extend(created)
+                        all_errors.extend(errs)
+                        add_step(f'Generating {group_name}', 'done',
+                                 f'{len(created)} files ({group_desc})',
+                                 time.time() - step_start)
+                    else:
+                        add_step(f'Generating {group_name}', 'failed', 'No files in response', time.time() - step_start)
+                        all_errors.append(f'{group_name}: empty response')
+                except Exception as e:
+                    add_step(f'Generating {group_name}', 'failed', str(e)[:100], time.time() - step_start)
+                    all_errors.append(f'{group_name}: {str(e)}')
+
+    # ---- SINGLE-REQUEST MODE (small projects or fallback) ----
+    if not error_context and not (is_large and all_files):
+        step_start = time.time()
         full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
@@ -462,63 +690,53 @@ Current project files:
 
 User request: {prompt}"""
 
-    result = call_yubiai(full_prompt, system_prompt=AGENT_SYSTEM_PROMPT, max_tokens=32768)
+        result = call_yubiai(full_prompt, system_prompt=AGENT_SYSTEM_PROMPT, max_tokens=32768)
 
-    if 'error' in result:
-        add_step('Calling YubiAI', 'failed', result['error'], time.time() - step_start)
-        return jsonify({'error': result['error'], 'steps': steps}), 500
+        if 'error' in result:
+            add_step('Calling YubiAI', 'failed', result['error'], time.time() - step_start)
+            return jsonify({'error': result['error'], 'steps': steps}), 500
 
-    response_text = result.get('response', '')
-    try:
-        agent_response = parse_agent_json(response_text)
-        if not agent_response:
-            add_step('Calling YubiAI', 'failed', 'Non-structured response', time.time() - step_start)
-            return jsonify({
-                'response': response_text,
-                'agent_executed': False,
-                'steps': steps,
-                'message': 'AI returned non-structured response'
-            })
-    except json.JSONDecodeError:
-        add_step('Calling YubiAI', 'failed', 'JSON parse error', time.time() - step_start)
-        return jsonify({
-            'response': response_text,
-            'agent_executed': False,
-            'steps': steps,
-            'message': 'Could not parse AI response'
-        })
+        response_text = result.get('response', '')
+        try:
+            agent_response = parse_agent_json(response_text)
+            if not agent_response:
+                add_step('Calling YubiAI', 'failed', 'Non-structured response', time.time() - step_start)
+                return jsonify({'response': response_text, 'agent_executed': False, 'steps': steps, 'message': 'AI returned non-structured response'})
+        except json.JSONDecodeError:
+            add_step('Calling YubiAI', 'failed', 'JSON parse error', time.time() - step_start)
+            return jsonify({'response': response_text, 'agent_executed': False, 'steps': steps, 'message': 'Could not parse AI response'})
 
-    roadmap = agent_response.get('roadmap', [])
-    run_command = agent_response.get('run_command', '')
-    add_step('Planning & generating code', 'done',
-             f'{len(roadmap)} steps planned, {len(agent_response.get("files", []))} files',
-             time.time() - step_start)
+        roadmap = agent_response.get('roadmap', [])
+        run_command = agent_response.get('run_command', '')
+        install_cmd = agent_response.get('install_command', '')
+        test_cmd = agent_response.get('test_command', '')
+        add_step('Planning & generating code', 'done',
+                 f'{len(roadmap)} steps planned, {len(agent_response.get("files", []))} files',
+                 time.time() - step_start)
 
-    # === STEP 3: Write files to disk ===
-    step_start = time.time()
-    files_list = agent_response.get('files', [])
-    created_files, errors = apply_file_changes(project_path, files_list)
-    all_files.extend(created_files)
-    all_errors.extend(errors)
-    add_step('Writing files', 'done',
-             f'{len(created_files)} files written' + (f', {len(errors)} errors' if errors else ''),
-             time.time() - step_start)
+        # Write files
+        step_start = time.time()
+        files_list = agent_response.get('files', [])
+        created_files, errors = apply_file_changes(project_path, files_list)
+        all_files.extend(created_files)
+        all_errors.extend(errors)
+        add_step('Writing files', 'done',
+                 f'{len(created_files)} files written' + (f', {len(errors)} errors' if errors else ''),
+                 time.time() - step_start)
 
-    # === STEP 4: Install dependencies ===
-    install_cmd = agent_response.get('install_command', '')
+    # === INSTALL DEPENDENCIES ===
     install_result = None
-    if install_cmd:
+    if install_cmd and all_files:
         step_start = time.time()
         install_result = execute_test_command(project_path, install_cmd, timeout=120)
         status = 'done' if install_result['success'] else 'failed'
         detail = 'Dependencies installed' if install_result['success'] else (install_result.get('stderr', '') or install_result.get('stdout', ''))[:200]
         add_step('Installing dependencies', status, detail, time.time() - step_start)
 
-    # === STEP 5: Test → Fix loop (up to MAX_FIX_LOOPS) ===
-    test_cmd = agent_response.get('test_command', '')
+    # === TEST → FIX LOOP (up to MAX_FIX_LOOPS) ===
     fix_iterations = []
 
-    if test_cmd and created_files:
+    if test_cmd and all_files:
         for fix_attempt in range(MAX_FIX_LOOPS + 1):  # 0 = initial test, 1-3 = fix attempts
             step_start = time.time()
             time.sleep(0.5)
@@ -587,17 +805,16 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
     else:
         # No test command — assume code is ready
         final_test_passed = True
-        if created_files:
+        if all_files:
             add_step('Testing code', 'skipped', 'No test command provided')
 
-    # === STEP 6: Auto-deploy if tests passed ===
+    # === AUTO-DEPLOY if tests passed ===
     deploy_result = None
-    deploy_ready = agent_response.get('deploy_ready', False) or final_test_passed
+    deploy_ready = final_test_passed
 
     if auto_deploy and deploy_ready and run_command:
         step_start = time.time()
         try:
-            # Import deploy function
             from deploy import deploy_project_internal
             deploy_result = deploy_project_internal(user, project_id, project_path, run_command)
             if deploy_result and deploy_result.get('success'):
@@ -613,17 +830,17 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
 
     return jsonify({
         'agent_executed': True,
-        'phase': agent_response.get('phase', 'build'),
+        'phase': 'fix' if error_context else ('multi-build' if is_large and all_files else 'build'),
         'roadmap': roadmap,
-        'plan': agent_response.get('plan', agent_response.get('message', '')),
+        'plan': '',
         'files': all_files,
         'run_command': run_command,
         'test_command': test_cmd,
         'install_command': install_cmd,
         'deploy_ready': deploy_ready,
-        'message': agent_response.get('message', 'Agent completed'),
+        'message': f'Agent completed: {len(all_files)} files generated' + (f' in {len([s for s in steps if s["name"].startswith("Generating")])} batches' if is_large else ''),
         'errors': all_errors,
-        'model': result.get('model', ''),
+        'model': 'gpt-oss-120b',
         'steps': steps,
         'fix_iterations': fix_iterations,
         'tests_passed': final_test_passed,

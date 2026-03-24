@@ -1009,7 +1009,7 @@ function renderAgentResult(data) {
     let html = '';
 
     // Phase badge
-    const phaseBadge = data.phase === 'fix' ? '🔧 Bug Fix' : data.phase === 'update' ? '🔄 Update' : data.phase === 'plan' ? '📋 Plan' : '🏗️ Build';
+    const phaseBadge = data.phase === 'fix' ? '🔧 Bug Fix' : data.phase === 'update' ? '🔄 Update' : data.phase === 'plan' ? '📋 Plan' : data.phase === 'multi-build' ? '🏗️ Multi-Build' : '🏗️ Build';
     const statusBadge = data.tests_passed ? '<span style="background:#3fb950;color:#000;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:700;margin-left:8px;">PASSED</span>' : (data.errors && data.errors.length ? '<span style="background:#f85149;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:700;margin-left:8px;">ISSUES</span>' : '');
     html += `<div class="agent-result-header"><span>${phaseBadge}</span> Agent Completed${statusBadge}</div>`;
 
@@ -1208,14 +1208,16 @@ function addAgentProgress() {
     el.className = 'ai-message system agent-progress';
     el.innerHTML = `
         <div class="agent-progress-title">🤖 YubiAI Autonomous Agent</div>
+        <div class="agent-mode-badge" style="font-size:0.7rem;color:var(--accent-blue);margin-bottom:6px;font-weight:600;">Analyzing project size...</div>
         <div class="agent-steps">
             <div class="agent-step active" data-step="1"><span class="step-icon spinner">⚙</span> Analyzing project...</div>
-            <div class="agent-step" data-step="2"><span class="step-icon">🧠</span> Planning &amp; generating code...</div>
-            <div class="agent-step" data-step="3"><span class="step-icon">📁</span> Writing files to disk...</div>
-            <div class="agent-step" data-step="4"><span class="step-icon">📦</span> Installing dependencies...</div>
-            <div class="agent-step" data-step="5"><span class="step-icon">🧪</span> Testing &amp; auto-fixing...</div>
-            <div class="agent-step" data-step="6"><span class="step-icon">🚀</span> Auto-deploying...</div>
-            <div class="agent-step" data-step="7"><span class="step-icon">✅</span> Complete!</div>
+            <div class="agent-step" data-step="2"><span class="step-icon">🧠</span> Planning architecture...</div>
+            <div class="agent-step" data-step="3"><span class="step-icon">📁</span> Generating code (batch 1)...</div>
+            <div class="agent-step" data-step="4"><span class="step-icon">📁</span> Generating code (batch 2+)...</div>
+            <div class="agent-step" data-step="5"><span class="step-icon">📦</span> Installing dependencies...</div>
+            <div class="agent-step" data-step="6"><span class="step-icon">🧪</span> Testing &amp; auto-fixing...</div>
+            <div class="agent-step" data-step="7"><span class="step-icon">🚀</span> Auto-deploying...</div>
+            <div class="agent-step" data-step="8"><span class="step-icon">✅</span> Complete!</div>
         </div>
         <div class="agent-timer" style="font-size:0.7rem;color:var(--text-secondary);margin-top:6px;">Elapsed: 0s</div>
     `;
@@ -1228,7 +1230,13 @@ function animateAgentProgress(el) {
     if (!el) return;
     const startTime = Date.now();
     let currentStep = 1;
-    const stepTimings = [0, 3000, 10000, 20000, 30000, 45000, 60000];
+    const stepTimings = [0, 3000, 12000, 25000, 40000, 55000, 70000, 85000];
+
+    // Update mode badge after 4 seconds
+    setTimeout(() => {
+        const badge = el.querySelector('.agent-mode-badge');
+        if (badge) badge.textContent = '🔄 Multi-Request Mode — building in batches for best results';
+    }, 4000);
 
     _agentAnimationInterval = setInterval(() => {
         if (!el || !el.parentNode) { stopAgentAnimation(); return; }
