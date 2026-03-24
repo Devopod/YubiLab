@@ -953,6 +953,7 @@ async function sendAIMessage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
+            timeout: aiAction === 'agent' ? 600000 : 120000,  // 10 min for agent, 2 min for others
         });
 
         const data = await res.json();
