@@ -936,8 +936,8 @@ async function sendAIMessage() {
 
         if (aiAction === 'agent') {
             endpoint = '/api/ai/agent';
-            body = { prompt, project_id: projectId };
-            updateAgentStep(progressEl, 1);
+            body = { prompt, project_id: projectId, auto_deploy: true };
+            animateAgentProgress(progressEl);
         } else {
             endpoint = '/api/ai/generate';
             body = {
@@ -949,13 +949,6 @@ async function sendAIMessage() {
             };
         }
 
-        if (aiAction === 'agent') {
-            setTimeout(() => updateAgentStep(progressEl, 2), 3000);
-            setTimeout(() => updateAgentStep(progressEl, 3), 8000);
-            setTimeout(() => updateAgentStep(progressEl, 4), 15000);
-            setTimeout(() => updateAgentStep(progressEl, 5), 20000);
-        }
-
         const res = await apiFetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -965,14 +958,20 @@ async function sendAIMessage() {
         const data = await res.json();
 
         if (aiAction === 'agent') {
-            updateAgentStep(progressEl, 6);
-            await new Promise(r => setTimeout(r, 500));
+            stopAgentAnimation();
         }
         progressEl.remove();
 
         if (aiAction === 'agent' && data.agent_executed) {
             renderAgentResult(data);
             await refreshFiles();
+            // Auto-open preview if deployed
+            if (data.deploy_result && data.deploy_result.success) {
+                setTimeout(() => {
+                    document.getElementById('preview-frame').src = `${data.deploy_result.url}?t=${Date.now()}`;
+                    switchBottomTab('preview');
+                }, 1000);
+            }
         } else if (data.response) {
             addAIMessage(data.response, 'assistant');
             saveConversation('assistant', data.response);
@@ -1011,25 +1010,39 @@ function renderAgentResult(data) {
 
     // Phase badge
     const phaseBadge = data.phase === 'fix' ? '🔧 Bug Fix' : data.phase === 'update' ? '🔄 Update' : data.phase === 'plan' ? '📋 Plan' : '🏗️ Build';
-    html += `<div class="agent-result-header"><span>${phaseBadge}</span> Agent Completed</div>`;
+    const statusBadge = data.tests_passed ? '<span style="background:#3fb950;color:#000;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:700;margin-left:8px;">PASSED</span>' : (data.errors && data.errors.length ? '<span style="background:#f85149;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:700;margin-left:8px;">ISSUES</span>' : '');
+    html += `<div class="agent-result-header"><span>${phaseBadge}</span> Agent Completed${statusBadge}</div>`;
 
-    // Roadmap
+    // Steps timeline (new multi-step view)
+    if (data.steps && data.steps.length > 0) {
+        html += `<div class="agent-steps-timeline">`;
+        data.steps.forEach((step, i) => {
+            const icon = step.status === 'done' ? '✅' : step.status === 'failed' ? '❌' : step.status === 'skipped' ? '⏭️' : '⏳';
+            const color = step.status === 'done' ? '#3fb950' : step.status === 'failed' ? '#f85149' : '#8b949e';
+            const duration = step.duration ? ` (${step.duration}s)` : '';
+            html += `<div class="agent-timeline-step" style="border-left:2px solid ${color};padding:4px 0 4px 12px;margin-left:8px;">`;
+            html += `<div style="font-size:0.82rem;font-weight:600;color:${color};">${icon} ${escapeHtml(step.name)}${duration}</div>`;
+            if (step.detail) {
+                html += `<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">${escapeHtml(step.detail.substring(0, 200))}</div>`;
+            }
+            html += `</div>`;
+        });
+        html += `</div>`;
+    }
+
+    // Roadmap (collapsed by default if steps are present)
     if (data.roadmap && data.roadmap.length > 0) {
-        html += `<div class="agent-roadmap"><div class="agent-roadmap-title">📋 Roadmap</div>`;
+        const collapsed = data.steps && data.steps.length > 0 ? 'style="display:none;"' : '';
+        html += `<div class="agent-roadmap" ${collapsed}><div class="agent-roadmap-title">📋 Roadmap</div>`;
         data.roadmap.forEach((step, i) => {
             html += `<div class="agent-roadmap-step"><span class="step-num">${i + 1}</span>${escapeHtml(step)}</div>`;
         });
         html += `</div>`;
     }
 
-    // Plan description
-    if (data.plan) {
-        html += `<div class="agent-plan">${escapeHtml(data.plan)}</div>`;
-    }
-
     // Files
     if (data.files && data.files.length > 0) {
-        html += `<div class="agent-files-header">Files created/modified:</div><div class="agent-files-list">`;
+        html += `<div class="agent-files-header">📁 ${data.files.length} files created/modified:</div><div class="agent-files-list">`;
         data.files.forEach(f => {
             const icon = f.action === 'deleted' ? '🗑' : (f.action === 'modify' ? '✍' : '📄');
             html += `<div class="agent-file-item"><span class="agent-file-icon">${icon}</span><span class="agent-file-path">${escapeHtml(f.path)}</span><span class="agent-file-action">${f.action}</span></div>`;
@@ -1037,38 +1050,23 @@ function renderAgentResult(data) {
         html += `</div>`;
     }
 
-    // Install result
-    if (data.install_result && data.install_result.ran) {
-        const instIcon = data.install_result.success ? '✅' : '❌';
-        html += `<div class="agent-test-result" style="border-color:${data.install_result.success ? '#3fb950' : '#f85149'}"><strong>${instIcon} Dependencies:</strong> ${data.install_result.success ? 'Installed successfully' : 'Install failed'}</div>`;
-    }
-
-    // Test result
-    if (data.test_result && data.test_result.ran) {
-        const testIcon = data.test_result.passed ? '✅' : '❌';
-        html += `<div class="agent-test-result" style="border-color:${data.test_result.passed ? '#3fb950' : '#f85149'}"><strong>${testIcon} Test:</strong> ${data.test_result.passed ? 'Passed' : 'Failed'}`;
-        if (data.test_result.output && !data.test_result.passed) {
-            html += `<pre class="agent-error-output">${escapeHtml(data.test_result.output)}</pre>`;
-        }
+    // Fix iterations
+    if (data.fix_iterations && data.fix_iterations.length > 0) {
+        html += `<div style="margin-top:8px;"><strong style="font-size:0.8rem;">🔧 Auto-Fix Iterations:</strong>`;
+        data.fix_iterations.forEach(fix => {
+            const fIcon = fix.success ? '✅' : '❌';
+            html += `<div style="font-size:0.75rem;margin-top:4px;color:${fix.success ? '#3fb950' : '#f85149'};">${fIcon} Attempt #${fix.attempt}: ${escapeHtml(fix.message || fix.error || 'Unknown')}</div>`;
+        });
         html += `</div>`;
     }
 
-    // Auto-fix result
-    if (data.auto_fix && data.auto_fix.attempted) {
-        const fixIcon = data.auto_fix.test_passed ? '✅' : '⚠️';
-        html += `<div class="agent-test-result" style="border-color:${data.auto_fix.test_passed ? '#3fb950' : '#d29922'}"><strong>${fixIcon} Auto-Fix:</strong> ${data.auto_fix.test_passed ? 'Fixed successfully!' : 'Attempted fix'}`;
-        if (data.auto_fix.message) {
-            html += `<div style="font-size:0.8rem;margin-top:4px;color:var(--text-secondary);">${escapeHtml(data.auto_fix.message)}</div>`;
+    // Deploy result
+    if (data.deploy_result) {
+        if (data.deploy_result.success) {
+            html += `<div class="agent-test-result" style="border-color:#3fb950;background:rgba(63,185,80,0.1);"><strong>🚀 Auto-Deployed!</strong> Running on port ${data.deploy_result.port}${data.deploy_result.ready ? ' — Ready!' : ' — Starting up...'}</div>`;
+        } else {
+            html += `<div class="agent-test-result" style="border-color:#f85149;"><strong>🚀 Deploy Failed:</strong> ${escapeHtml(data.deploy_result.error || 'Unknown error')}</div>`;
         }
-        if (data.auto_fix.fixed_files) {
-            data.auto_fix.fixed_files.forEach(f => {
-                html += `<div style="font-size:0.75rem;color:var(--accent-blue);margin-top:2px;">🔧 Fixed: ${escapeHtml(f.path)}</div>`;
-            });
-        }
-        if (data.auto_fix.remaining_error) {
-            html += `<pre class="agent-error-output">${escapeHtml(data.auto_fix.remaining_error)}</pre>`;
-        }
-        html += `</div>`;
     }
 
     // Run command
@@ -1086,13 +1084,17 @@ function renderAgentResult(data) {
 
     // Action buttons
     html += `<div class="agent-actions" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">`;
-    if (data.deploy_ready) {
-        html += `<button onclick="agentDeploy()" class="btn btn-sm" style="background:linear-gradient(135deg,#3fb950,#2ea44f);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🚀 Deploy Now</button>`;
+    if (!data.deploy_result || !data.deploy_result.success) {
+        if (data.deploy_ready || data.tests_passed) {
+            html += `<button onclick="agentDeploy()" class="btn btn-sm" style="background:linear-gradient(135deg,#3fb950,#2ea44f);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🚀 Deploy Now</button>`;
+        }
+    } else if (data.deploy_result && data.deploy_result.success) {
+        html += `<button onclick="window.open('${data.deploy_result.url}','_blank')" class="btn btn-sm" style="background:linear-gradient(135deg,#3fb950,#2ea44f);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🌐 Open App</button>`;
     }
     if (data.run_command) {
         html += `<button onclick="agentRunInTerminal('${escapeAttr(data.run_command)}')" class="btn btn-sm" style="background:var(--accent-blue);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;">▶ Run</button>`;
     }
-    if (data.test_result && !data.test_result.passed && !(data.auto_fix && data.auto_fix.test_passed)) {
+    if (!data.tests_passed) {
         html += `<button onclick="agentRetryFix()" class="btn btn-sm" style="background:var(--accent-orange, #d29922);color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;">🔧 Fix Again</button>`;
     }
     html += `</div>`;
@@ -1106,12 +1108,12 @@ function renderAgentResult(data) {
     // Store last agent data for retry/deploy
     window._lastAgentData = data;
 
-    if (data.deploy_ready) {
-        showToast('App ready to deploy! Click Deploy Now.', 'success');
-    } else if (data.auto_fix && data.auto_fix.test_passed) {
-        showToast('Agent built & auto-fixed your project!', 'success');
-    } else if (data.test_result && data.test_result.passed) {
-        showToast('Agent built & verified your project!', 'success');
+    if (data.deploy_result && data.deploy_result.success) {
+        showToast('App built, tested & auto-deployed!', 'success');
+    } else if (data.tests_passed) {
+        showToast('Agent built & all tests passed!', 'success');
+    } else if (data.fix_iterations && data.fix_iterations.length > 0) {
+        showToast('Agent attempted auto-fixes. Check results.', 'info');
     } else {
         showToast('Agent completed. Check results.', 'info');
     }
@@ -1198,6 +1200,8 @@ async function agentRetryFix() {
     }
 }
 
+let _agentAnimationInterval = null;
+
 function addAgentProgress() {
     const messagesDiv = document.getElementById('ai-messages');
     const el = document.createElement('div');
@@ -1205,17 +1209,51 @@ function addAgentProgress() {
     el.innerHTML = `
         <div class="agent-progress-title">🤖 YubiAI Autonomous Agent</div>
         <div class="agent-steps">
-            <div class="agent-step active" data-step="1"><span class="step-icon spinner">⚙</span> Understanding project...</div>
-            <div class="agent-step" data-step="2"><span class="step-icon">📋</span> Planning roadmap...</div>
-            <div class="agent-step" data-step="3"><span class="step-icon">🔨</span> Generating code...</div>
-            <div class="agent-step" data-step="4"><span class="step-icon">📁</span> Creating files...</div>
-            <div class="agent-step" data-step="5"><span class="step-icon">🧪</span> Testing &amp; verifying...</div>
-            <div class="agent-step" data-step="6"><span class="step-icon">✅</span> Complete!</div>
+            <div class="agent-step active" data-step="1"><span class="step-icon spinner">⚙</span> Analyzing project...</div>
+            <div class="agent-step" data-step="2"><span class="step-icon">🧠</span> Planning &amp; generating code...</div>
+            <div class="agent-step" data-step="3"><span class="step-icon">📁</span> Writing files to disk...</div>
+            <div class="agent-step" data-step="4"><span class="step-icon">📦</span> Installing dependencies...</div>
+            <div class="agent-step" data-step="5"><span class="step-icon">🧪</span> Testing &amp; auto-fixing...</div>
+            <div class="agent-step" data-step="6"><span class="step-icon">🚀</span> Auto-deploying...</div>
+            <div class="agent-step" data-step="7"><span class="step-icon">✅</span> Complete!</div>
         </div>
+        <div class="agent-timer" style="font-size:0.7rem;color:var(--text-secondary);margin-top:6px;">Elapsed: 0s</div>
     `;
     messagesDiv.appendChild(el);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
     return el;
+}
+
+function animateAgentProgress(el) {
+    if (!el) return;
+    const startTime = Date.now();
+    let currentStep = 1;
+    const stepTimings = [0, 3000, 10000, 20000, 30000, 45000, 60000];
+
+    _agentAnimationInterval = setInterval(() => {
+        if (!el || !el.parentNode) { stopAgentAnimation(); return; }
+        const elapsed = Date.now() - startTime;
+
+        // Advance steps based on elapsed time
+        for (let i = stepTimings.length - 1; i >= 0; i--) {
+            if (elapsed >= stepTimings[i] && i + 1 > currentStep) {
+                currentStep = i + 1;
+                break;
+            }
+        }
+        updateAgentStep(el, currentStep);
+
+        // Update timer
+        const timerEl = el.querySelector('.agent-timer');
+        if (timerEl) timerEl.textContent = `Elapsed: ${Math.round(elapsed / 1000)}s`;
+    }, 500);
+}
+
+function stopAgentAnimation() {
+    if (_agentAnimationInterval) {
+        clearInterval(_agentAnimationInterval);
+        _agentAnimationInterval = null;
+    }
 }
 
 function updateAgentStep(el, step) {

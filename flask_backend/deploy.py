@@ -136,10 +136,9 @@ def detect_run_command(project_path, language):
     return None
 
 
-@deploy_bp.route('/api/deploy/<int:project_id>', methods=['POST'])
-@login_required
-def deploy_project(user, project_id):
-    """Deploy a project - works for all stacks."""
+def deploy_project_internal(user, project_id, project_path, run_command_override=None):
+    """Internal deploy function callable from agent without HTTP context.
+    Returns dict with success, port, url, etc."""
     conn = get_db()
     project = conn.execute(
         'SELECT * FROM projects WHERE id = ? AND user_id = ?',
@@ -148,7 +147,7 @@ def deploy_project(user, project_id):
 
     if not project:
         conn.close()
-        return jsonify({'error': 'Project not found'}), 404
+        return {'success': False, 'error': 'Project not found'}
 
     # Kill any existing deployment for this project
     existing = conn.execute(
@@ -167,55 +166,37 @@ def deploy_project(user, project_id):
         )
         conn.commit()
 
-    project_path = get_project_path(user['id'], project['name'])
-
-    # Find a free port
     port = find_free_port()
     if not port:
         conn.close()
-        return jsonify({'error': 'No free ports available'}), 500
+        return {'success': False, 'error': 'No free ports available'}
 
-    # Detect run command
-    data = request.get_json() or {}
-    run_command = data.get('run_command', '')
-    if not run_command:
-        run_command = detect_run_command(project_path, project['language'])
-
+    run_command = run_command_override or detect_run_command(project_path, project['language'])
     if not run_command:
         conn.close()
-        return jsonify({'error': 'Could not detect run command. Please provide one.'}), 400
+        return {'success': False, 'error': 'Could not detect run command'}
 
-    # Replace {port} placeholder
     run_command = run_command.replace('{port}', str(port))
 
-    # For Flask apps, inject PORT env var and disable debug to avoid reloader issues
     env = os.environ.copy()
     env['PORT'] = str(port)
     env['FLASK_RUN_PORT'] = str(port)
     env['HOST'] = '0.0.0.0'
     env['FLASK_DEBUG'] = '0'
     env['FLASK_APP'] = 'app.py'
-    # Remove WERKZEUG_SERVER_FD and WERKZEUG_RUN_MAIN to prevent socket.fromfd errors
     env.pop('WERKZEUG_SERVER_FD', None)
     env.pop('WERKZEUG_RUN_MAIN', None)
 
     try:
-        # Open a real log file for output redirection
         log_file = os.path.join(project_path, '.deploy.log')
         log_fd = open(log_file, 'w')
         proc = subprocess.Popen(
-            run_command,
-            shell=True,
-            cwd=project_path,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=log_fd,
-            stderr=log_fd,
+            run_command, shell=True, cwd=project_path, env=env,
+            stdin=subprocess.DEVNULL, stdout=log_fd, stderr=log_fd,
             start_new_session=True,
         )
 
         deploy_url = f'/preview-app/{project_id}'
-
         conn.execute(
             'INSERT INTO deployments (project_id, user_id, deploy_port, deploy_pid, status, deploy_url) VALUES (?, ?, ?, ?, ?, ?)',
             (project_id, user['id'], port, proc.pid, 'running', deploy_url)
@@ -235,24 +216,56 @@ def deploy_project(user, project_id):
                 ready = True
                 break
             except (ConnectionRefusedError, OSError):
-                # Check if process died
                 if proc.poll() is not None:
                     break
                 continue
 
-        return jsonify({
-            'status': 'deployed',
+        return {
+            'success': True,
             'port': port,
             'pid': proc.pid,
             'url': deploy_url,
             'command': run_command,
             'ready': ready,
-            'message': f'Project deployed on port {port}' + (' and ready!' if ready else ' (starting up...)'),
-        })
-
+        }
     except Exception as e:
         conn.close()
-        return jsonify({'error': f'Deploy failed: {str(e)}'}), 500
+        return {'success': False, 'error': str(e)}
+
+
+@deploy_bp.route('/api/deploy/<int:project_id>', methods=['POST'])
+@login_required
+def deploy_project(user, project_id):
+    """Deploy a project - works for all stacks."""
+    conn = get_db()
+    project = conn.execute(
+        'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+        (project_id, user['id'])
+    ).fetchone()
+    conn.close()
+
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+
+    project_path = get_project_path(user['id'], project['name'])
+
+    data = request.get_json() or {}
+    run_command = data.get('run_command', '')
+
+    result = deploy_project_internal(user, project_id, project_path, run_command or None)
+
+    if not result['success']:
+        return jsonify({'error': result['error']}), 500
+
+    return jsonify({
+        'status': 'deployed',
+        'port': result['port'],
+        'pid': result['pid'],
+        'url': result['url'],
+        'command': result['command'],
+        'ready': result['ready'],
+        'message': f'Project deployed on port {result["port"]}' + (' and ready!' if result['ready'] else ' (starting up...)'),
+    })
 
 
 @deploy_bp.route('/api/deploy/<int:project_id>', methods=['DELETE'])

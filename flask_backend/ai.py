@@ -16,8 +16,8 @@ def get_project_path(user_id, project_name):
     return os.path.join(WORKSPACES_DIR, str(user_id), safe_name)
 
 
-def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096):
-    """Call YubiAI API."""
+def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=3):
+    """Call YubiAI API with automatic retry and exponential backoff."""
     if not YUBIAI_API_KEY:
         return {"error": "YubiAI API key not configured. Set YUBIAI_API_KEY environment variable."}
     if not YUBIAI_API_URL:
@@ -33,34 +33,43 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
     if system_prompt:
         payload["system_prompt"] = system_prompt
 
-    try:
-        resp = requests.post(
-            YUBIAI_API_URL,
-            headers={
-                "Authorization": f"Bearer {YUBIAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=120,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        error_text = resp.text
-        if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
-            return {"error": "YubiAI API endpoint is offline. The ngrok tunnel may have disconnected. Please restart the YubiAI server."}
-        if resp.status_code == 404:
-            return {"error": "YubiAI API endpoint not found (404). The server may be offline or the URL may be incorrect."}
-        if resp.status_code == 401:
-            return {"error": "YubiAI API authentication failed. Check your API key."}
-        if resp.status_code == 429:
-            return {"error": "YubiAI API rate limit exceeded. Please wait and try again."}
-        return {"error": f"YubiAI API returned HTTP {resp.status_code}. Please check that the YubiAI server is running and the API URL is correct ({YUBIAI_API_URL})."}
-    except requests.exceptions.ConnectionError:
-        return {"error": "Cannot connect to YubiAI API. The server appears to be offline. Check if the ngrok tunnel is running."}
-    except requests.exceptions.Timeout:
-        return {"error": "YubiAI API request timed out (120s). The server may be overloaded."}
-    except Exception as e:
-        return {"error": f"YubiAI API error: {str(e)}"}
+    last_error = None
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                YUBIAI_API_URL,
+                headers={
+                    "Authorization": f"Bearer {YUBIAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=180,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            error_text = resp.text
+            if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
+                last_error = "YubiAI API endpoint is offline. The ngrok tunnel may have disconnected."
+            elif resp.status_code == 401:
+                return {"error": "YubiAI API authentication failed. Check your API key."}
+            elif resp.status_code == 429:
+                last_error = "YubiAI API rate limit exceeded."
+            elif resp.status_code == 404:
+                last_error = "YubiAI API endpoint not found (404)."
+            else:
+                last_error = f"YubiAI API returned HTTP {resp.status_code}."
+        except requests.exceptions.ConnectionError:
+            last_error = "Cannot connect to YubiAI API. The server appears to be offline."
+        except requests.exceptions.Timeout:
+            last_error = "YubiAI API request timed out (180s)."
+        except Exception as e:
+            last_error = f"YubiAI API error: {str(e)}"
+
+        # Exponential backoff: 2s, 4s, 8s
+        if attempt < retries - 1:
+            time.sleep(2 ** (attempt + 1))
+
+    return {"error": f"{last_error} (failed after {retries} retries)"}
 
 
 def get_project_files_context(project_path, max_file_size=10000):
@@ -385,12 +394,14 @@ def apply_file_changes(project_path, files_list):
 @ai_bp.route('/api/ai/agent', methods=['POST'])
 @login_required
 def ai_agent(user):
-    """YubiAI Autonomous Agent — powerful multi-step agent that plans, builds, tests, and fixes."""
+    """YubiAI Autonomous Agent — fully autonomous multi-loop agent.
+    Builds → Installs → Tests → Fixes (up to 3 loops) → Deploys → Verifies.
+    Returns all steps and results in a single response."""
     data = request.get_json()
     prompt = data.get('prompt', '')
     project_id = data.get('project_id')
-    error_context = data.get('error_context', '')  # Error from previous test run
-    phase = data.get('phase', 'auto')  # auto, fix, update
+    error_context = data.get('error_context', '')
+    auto_deploy = data.get('auto_deploy', True)
 
     if not prompt or not project_id:
         return jsonify({'error': 'Prompt and project_id are required'}), 400
@@ -408,12 +419,28 @@ def ai_agent(user):
     project_path = get_project_path(user['id'], project['name'])
     os.makedirs(project_path, exist_ok=True)
 
-    # Get current project files for context
-    files_context, file_list = get_project_files_context(project_path)
+    # Track all steps for the response
+    steps = []
+    all_files = []
+    all_errors = []
+    final_test_passed = False
+    run_command = ''
+    deploy_ready = False
+    MAX_FIX_LOOPS = 3
 
-    # Build the user prompt with full context
+    def add_step(name, status, detail='', duration=0):
+        steps.append({'name': name, 'status': status, 'detail': detail, 'duration': round(duration, 1)})
+
+    # === STEP 1: Understand project ===
+    step_start = time.time()
+    files_context, file_list = get_project_files_context(project_path)
+    add_step('Analyzing project', 'done',
+             f'Found {len(file_list)} files' if file_list else 'Empty project',
+             time.time() - step_start)
+
+    # === STEP 2: Call AI to plan & build ===
+    step_start = time.time()
     if error_context:
-        # Bug fix mode — provide error details
         full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
@@ -438,58 +465,83 @@ User request: {prompt}"""
     result = call_yubiai(full_prompt, system_prompt=AGENT_SYSTEM_PROMPT, max_tokens=32768)
 
     if 'error' in result:
-        return jsonify({'error': result['error']}), 500
+        add_step('Calling YubiAI', 'failed', result['error'], time.time() - step_start)
+        return jsonify({'error': result['error'], 'steps': steps}), 500
 
     response_text = result.get('response', '')
-
-    # Parse the AI response
     try:
         agent_response = parse_agent_json(response_text)
         if not agent_response:
+            add_step('Calling YubiAI', 'failed', 'Non-structured response', time.time() - step_start)
             return jsonify({
                 'response': response_text,
                 'agent_executed': False,
+                'steps': steps,
                 'message': 'AI returned non-structured response'
             })
     except json.JSONDecodeError:
+        add_step('Calling YubiAI', 'failed', 'JSON parse error', time.time() - step_start)
         return jsonify({
             'response': response_text,
             'agent_executed': False,
-            'message': 'Could not parse AI response as structured command'
+            'steps': steps,
+            'message': 'Could not parse AI response'
         })
 
-    # Apply file changes
+    roadmap = agent_response.get('roadmap', [])
+    run_command = agent_response.get('run_command', '')
+    add_step('Planning & generating code', 'done',
+             f'{len(roadmap)} steps planned, {len(agent_response.get("files", []))} files',
+             time.time() - step_start)
+
+    # === STEP 3: Write files to disk ===
+    step_start = time.time()
     files_list = agent_response.get('files', [])
     created_files, errors = apply_file_changes(project_path, files_list)
+    all_files.extend(created_files)
+    all_errors.extend(errors)
+    add_step('Writing files', 'done',
+             f'{len(created_files)} files written' + (f', {len(errors)} errors' if errors else ''),
+             time.time() - step_start)
 
-    # Run install command if provided
+    # === STEP 4: Install dependencies ===
     install_cmd = agent_response.get('install_command', '')
     install_result = None
     if install_cmd:
-        install_result = execute_test_command(project_path, install_cmd, timeout=60)
+        step_start = time.time()
+        install_result = execute_test_command(project_path, install_cmd, timeout=120)
+        status = 'done' if install_result['success'] else 'failed'
+        detail = 'Dependencies installed' if install_result['success'] else (install_result.get('stderr', '') or install_result.get('stdout', ''))[:200]
+        add_step('Installing dependencies', status, detail, time.time() - step_start)
 
-    # Run test command to verify the code works
+    # === STEP 5: Test → Fix loop (up to MAX_FIX_LOOPS) ===
     test_cmd = agent_response.get('test_command', '')
-    test_result = None
+    fix_iterations = []
+
     if test_cmd and created_files:
-        time.sleep(0.5)  # Brief pause for filesystem sync
-        test_result = execute_test_command(project_path, test_cmd)
+        for fix_attempt in range(MAX_FIX_LOOPS + 1):  # 0 = initial test, 1-3 = fix attempts
+            step_start = time.time()
+            time.sleep(0.5)
+            test_result = execute_test_command(project_path, test_cmd)
+            test_output = (test_result.get('stderr', '') or test_result.get('stdout', ''))[:2000]
 
-    # Determine if we need auto-fix
-    needs_fix = False
-    test_output = ''
-    if test_result and not test_result['success']:
-        needs_fix = True
-        test_output = (test_result.get('stderr', '') or test_result.get('stdout', ''))[:2000]
+            if test_result['success']:
+                final_test_passed = True
+                label = 'Testing code' if fix_attempt == 0 else f'Re-testing (attempt {fix_attempt})'
+                add_step(label, 'done', 'All tests passed', time.time() - step_start)
+                break
+            else:
+                label = 'Testing code' if fix_attempt == 0 else f'Re-testing (attempt {fix_attempt})'
+                add_step(label, 'failed', test_output[:150], time.time() - step_start)
 
-    # If test failed, attempt ONE automatic fix
-    fix_result = None
-    if needs_fix and test_output:
-        fix_prompt = f"""Project: {project['name']} (Language: {project['language']})
-Project files: {', '.join(file_list + [f['path'] for f in created_files])}
+                # If we still have fix attempts left, call AI to fix
+                if fix_attempt < MAX_FIX_LOOPS:
+                    step_start = time.time()
+                    current_files_ctx = get_project_files_context(project_path)[0]
+                    fix_prompt = f"""Project: {project['name']} (Language: {project['language']})
 
 Current project files:
-{get_project_files_context(project_path)[0]}
+{current_files_ctx}
 
 TEST COMMAND FAILED: {test_cmd}
 ERROR OUTPUT:
@@ -497,59 +549,83 @@ ERROR OUTPUT:
 
 Fix this error. Only modify the files that have the bug. Do NOT rewrite everything."""
 
-        fix_api_result = call_yubiai(fix_prompt, system_prompt=AGENT_SYSTEM_PROMPT, max_tokens=32768)
+                    fix_api_result = call_yubiai(fix_prompt, system_prompt=AGENT_SYSTEM_PROMPT, max_tokens=32768)
+                    if 'error' in fix_api_result:
+                        add_step(f'Auto-fix #{fix_attempt + 1}', 'failed', fix_api_result['error'], time.time() - step_start)
+                        fix_iterations.append({'attempt': fix_attempt + 1, 'success': False, 'error': fix_api_result['error']})
+                        break
 
-        if 'error' not in fix_api_result:
-            try:
-                fix_response = parse_agent_json(fix_api_result.get('response', ''))
-                if fix_response and fix_response.get('files'):
-                    fixed_files, fix_errors = apply_file_changes(project_path, fix_response.get('files', []))
-                    errors.extend(fix_errors)
-                    created_files.extend(fixed_files)
+                    try:
+                        fix_response = parse_agent_json(fix_api_result.get('response', ''))
+                        if fix_response and fix_response.get('files'):
+                            fixed_files, fix_errors = apply_file_changes(project_path, fix_response.get('files', []))
+                            all_files.extend(fixed_files)
+                            all_errors.extend(fix_errors)
+                            fix_msg = fix_response.get('message', f'Fixed {len(fixed_files)} files')
+                            add_step(f'Auto-fix #{fix_attempt + 1}', 'done',
+                                     f'{fix_msg} ({len(fixed_files)} files)',
+                                     time.time() - step_start)
+                            fix_iterations.append({
+                                'attempt': fix_attempt + 1,
+                                'success': True,
+                                'files': fixed_files,
+                                'message': fix_msg,
+                            })
+                            # Update run/test commands if provided
+                            if fix_response.get('run_command'):
+                                run_command = fix_response['run_command']
+                            if fix_response.get('test_command'):
+                                test_cmd = fix_response['test_command']
+                        else:
+                            add_step(f'Auto-fix #{fix_attempt + 1}', 'failed', 'No file changes in fix', time.time() - step_start)
+                            fix_iterations.append({'attempt': fix_attempt + 1, 'success': False, 'error': 'No changes'})
+                            break
+                    except Exception as e:
+                        add_step(f'Auto-fix #{fix_attempt + 1}', 'failed', str(e)[:100], time.time() - step_start)
+                        fix_iterations.append({'attempt': fix_attempt + 1, 'success': False, 'error': str(e)})
+                        break
+    else:
+        # No test command — assume code is ready
+        final_test_passed = True
+        if created_files:
+            add_step('Testing code', 'skipped', 'No test command provided')
 
-                    # Re-run test
-                    if test_cmd:
-                        time.sleep(0.5)
-                        retest = execute_test_command(project_path, test_cmd)
-                        fix_result = {
-                            'attempted': True,
-                            'fixed_files': fixed_files,
-                            'test_passed': retest['success'] if retest else False,
-                            'message': fix_response.get('message', ''),
-                            'remaining_error': retest.get('stderr', '')[:500] if retest and not retest['success'] else '',
-                        }
-                    else:
-                        fix_result = {
-                            'attempted': True,
-                            'fixed_files': fixed_files,
-                            'test_passed': True,
-                            'message': fix_response.get('message', ''),
-                        }
-            except Exception:
-                fix_result = {'attempted': True, 'test_passed': False, 'message': 'Auto-fix parse failed'}
+    # === STEP 6: Auto-deploy if tests passed ===
+    deploy_result = None
+    deploy_ready = agent_response.get('deploy_ready', False) or final_test_passed
+
+    if auto_deploy and deploy_ready and run_command:
+        step_start = time.time()
+        try:
+            # Import deploy function
+            from deploy import deploy_project_internal
+            deploy_result = deploy_project_internal(user, project_id, project_path, run_command)
+            if deploy_result and deploy_result.get('success'):
+                add_step('Deploying app', 'done',
+                         f'Running on port {deploy_result.get("port", "?")}',
+                         time.time() - step_start)
+            else:
+                err = deploy_result.get('error', 'Unknown') if deploy_result else 'Deploy function failed'
+                add_step('Deploying app', 'failed', err[:150], time.time() - step_start)
+        except Exception as e:
+            add_step('Deploying app', 'failed', str(e)[:150], time.time() - step_start)
+            deploy_result = None
 
     return jsonify({
         'agent_executed': True,
         'phase': agent_response.get('phase', 'build'),
-        'roadmap': agent_response.get('roadmap', []),
+        'roadmap': roadmap,
         'plan': agent_response.get('plan', agent_response.get('message', '')),
-        'files': created_files,
-        'run_command': agent_response.get('run_command', ''),
+        'files': all_files,
+        'run_command': run_command,
         'test_command': test_cmd,
         'install_command': install_cmd,
-        'deploy_ready': agent_response.get('deploy_ready', False),
+        'deploy_ready': deploy_ready,
         'message': agent_response.get('message', 'Agent completed'),
-        'errors': errors,
+        'errors': all_errors,
         'model': result.get('model', ''),
-        'test_result': {
-            'ran': test_result is not None,
-            'passed': test_result['success'] if test_result else None,
-            'output': test_output[:500] if test_output else '',
-        } if test_result else None,
-        'auto_fix': fix_result,
-        'install_result': {
-            'ran': True,
-            'success': install_result['success'],
-            'output': (install_result.get('stderr', '') or install_result.get('stdout', ''))[:500],
-        } if install_result else None,
+        'steps': steps,
+        'fix_iterations': fix_iterations,
+        'tests_passed': final_test_passed,
+        'deploy_result': deploy_result,
     })
