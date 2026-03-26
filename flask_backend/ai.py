@@ -519,6 +519,211 @@ def sanitize_flask_code(content, file_path):
     return content
 
 
+def generate_fallback_files(project_path, language='python'):
+    """Auto-generate missing critical files (requirements.txt, run.py, static CSS)
+    by scanning existing generated code. Called when API fails mid-build."""
+    generated = []
+
+    # --- requirements.txt ---
+    req_path = os.path.join(project_path, 'requirements.txt')
+    if not os.path.isfile(req_path):
+        # Scan all .py files for import statements to detect needed packages
+        pip_packages = set()
+        # Map of import names to pip package names
+        import_to_pip = {
+            'flask': 'Flask', 'flask_sqlalchemy': 'Flask-SQLAlchemy',
+            'flask_login': 'flask-login', 'flask_wtf': 'Flask-WTF',
+            'flask_bcrypt': 'Flask-Bcrypt', 'flask_cors': 'Flask-Cors',
+            'flask_migrate': 'Flask-Migrate', 'flask_mail': 'Flask-Mail',
+            'flask_restful': 'Flask-RESTful', 'flask_socketio': 'Flask-SocketIO',
+            'wtforms': 'WTForms', 'sqlalchemy': 'SQLAlchemy',
+            'bcrypt': 'bcrypt', 'werkzeug': 'Werkzeug',
+            'markupsafe': 'MarkupSafe', 'jinja2': 'Jinja2',
+            'requests': 'requests', 'gunicorn': 'gunicorn',
+            'python_dotenv': 'python-dotenv', 'dotenv': 'python-dotenv',
+            'PIL': 'Pillow', 'celery': 'celery', 'redis': 'redis',
+            'jwt': 'PyJWT', 'marshmallow': 'marshmallow',
+            'email_validator': 'email-validator',
+        }
+        for root, _, files in os.walk(project_path):
+            for fname in files:
+                if not fname.endswith('.py'):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, 'r') as f:
+                        content = f.read()
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if line.startswith('import ') or line.startswith('from '):
+                            # Extract module name
+                            parts = line.split()
+                            if parts[0] == 'from':
+                                mod = parts[1].split('.')[0]
+                            else:
+                                mod = parts[1].split('.')[0]
+                            if mod in import_to_pip:
+                                pip_packages.add(import_to_pip[mod])
+                except Exception:
+                    continue
+        if pip_packages:
+            with open(req_path, 'w') as f:
+                f.write('\n'.join(sorted(pip_packages)) + '\n')
+            generated.append({'path': 'requirements.txt', 'action': 'create'})
+
+    # --- run.py ---
+    run_path = os.path.join(project_path, 'run.py')
+    if not os.path.isfile(run_path):
+        # Detect app structure to generate appropriate run.py
+        has_create_app = False
+        app_init = os.path.join(project_path, 'app', '__init__.py')
+        if os.path.isfile(app_init):
+            try:
+                with open(app_init, 'r') as f:
+                    content = f.read()
+                if 'def create_app' in content:
+                    has_create_app = True
+            except Exception:
+                pass
+
+        if has_create_app:
+            run_content = """import os
+from app import create_app
+
+app = create_app()
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002)))
+    app.run(host='0.0.0.0', port=port, debug=False)
+"""
+        else:
+            # Check for main.py with app object
+            main_py = os.path.join(project_path, 'main.py')
+            if os.path.isfile(main_py):
+                run_content = None  # main.py already exists, don't overwrite
+            else:
+                run_content = """import os
+from app import create_app
+
+app = create_app()
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002)))
+    app.run(host='0.0.0.0', port=port, debug=False)
+"""
+        if run_content:
+            with open(run_path, 'w') as f:
+                f.write(run_content)
+            generated.append({'path': 'run.py', 'action': 'create'})
+
+    # --- Static CSS fallback ---
+    css_dir = os.path.join(project_path, 'app', 'static', 'css')
+    css_path = os.path.join(css_dir, 'styles.css')
+    if os.path.isdir(os.path.join(project_path, 'app', 'templates')) and not os.path.isfile(css_path):
+        os.makedirs(css_dir, exist_ok=True)
+        css_content = """/* Auto-generated fallback styles */
+:root {
+    --primary: #667eea;
+    --primary-dark: #5a67d8;
+    --bg-dark: #0f0f23;
+    --bg-card: #1a1a2e;
+    --text: #e2e8f0;
+    --text-muted: #a0aec0;
+    --border: #2d3748;
+    --success: #48bb78;
+    --danger: #fc8181;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: linear-gradient(135deg, var(--bg-dark), #16213e);
+    color: var(--text);
+    min-height: 100vh;
+}
+.container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary), #764ba2);
+    color: white;
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
+.btn-danger { background: var(--danger); color: white; }
+.form-control {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 1rem;
+    margin-bottom: 1rem;
+}
+.form-control:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(102,126,234,0.2); }
+.alert { padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+.alert-success { background: rgba(72,187,120,0.15); border: 1px solid var(--success); color: var(--success); }
+.alert-danger { background: rgba(252,129,129,0.15); border: 1px solid var(--danger); color: var(--danger); }
+h1, h2, h3 { background: linear-gradient(135deg, var(--primary), #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.navbar {
+    background: var(--bg-card);
+    padding: 1rem 2rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+@media (max-width: 768px) {
+    .container { padding: 1rem; }
+    .card { padding: 1.5rem; }
+}
+"""
+        with open(css_path, 'w') as f:
+            f.write(css_content)
+        generated.append({'path': 'app/static/css/styles.css', 'action': 'create'})
+
+    # --- Static JS fallback ---
+    js_dir = os.path.join(project_path, 'app', 'static', 'js')
+    js_path = os.path.join(js_dir, 'main.js')
+    if os.path.isdir(os.path.join(project_path, 'app', 'templates')) and not os.path.isfile(js_path):
+        os.makedirs(js_dir, exist_ok=True)
+        js_content = """// Auto-generated fallback JS
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-dismiss alerts after 5 seconds
+    document.querySelectorAll('.alert').forEach(function(alert) {
+        setTimeout(function() { alert.style.opacity = '0'; setTimeout(function() { alert.remove(); }, 300); }, 5000);
+    });
+    // Form validation feedback
+    document.querySelectorAll('form').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            var btn = form.querySelector('button[type=\"submit\"]');
+            if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
+        });
+    });
+});
+"""
+        with open(js_path, 'w') as f:
+            f.write(js_content)
+        generated.append({'path': 'app/static/js/main.js', 'action': 'create'})
+
+    return generated
+
+
 def apply_file_changes(project_path, files_list):
     """Apply file changes from agent response to disk."""
     created_files = []
@@ -825,6 +1030,28 @@ User request: {prompt}"""
         add_step('Writing files', 'done',
                  f'{len(created_files)} files written' + (f', {len(errors)} errors' if errors else ''),
                  time.time() - step_start)
+
+    # === FALLBACK FILE GENERATION ===
+    # When API fails mid-build, auto-generate missing critical files
+    if all_files and project['language'] == 'python':
+        fallback_files = generate_fallback_files(project_path, language='python')
+        if fallback_files:
+            all_files.extend(fallback_files)
+            fallback_names = ', '.join(f['path'] for f in fallback_files)
+            add_step('Auto-generating missing files', 'done', f'Created: {fallback_names}')
+        # Set fallback commands if they were never set (API failed before plan was returned)
+        if not run_command:
+            if os.path.isfile(os.path.join(project_path, 'run.py')):
+                run_command = 'python run.py'
+            elif os.path.isfile(os.path.join(project_path, 'main.py')):
+                run_command = 'python main.py'
+        if not install_cmd and os.path.isfile(os.path.join(project_path, 'requirements.txt')):
+            install_cmd = 'pip install -r requirements.txt'
+        if not test_cmd:
+            if os.path.isfile(os.path.join(project_path, 'run.py')):
+                test_cmd = 'python -m py_compile run.py'
+            elif os.path.isfile(os.path.join(project_path, 'main.py')):
+                test_cmd = 'python -m py_compile main.py'
 
     # === INSTALL DEPENDENCIES ===
     install_result = None
