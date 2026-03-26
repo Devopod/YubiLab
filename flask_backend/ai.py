@@ -6,6 +6,7 @@ import os
 import json
 import subprocess
 import time
+import re
 from config import WORKSPACES_DIR, YUBIAI_API_URL, YUBIAI_API_KEY
 
 ai_bp = Blueprint('ai', __name__)
@@ -225,6 +226,14 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Add requirements.txt with pinned versions when using pip packages
 - NEVER put CSS/JS frameworks (Bootstrap, jQuery, Tailwind, etc.) in requirements.txt — they are loaded via CDN in HTML, not pip
 - Follow best practices for each language/framework
+- Always include `import os` in run.py when using os.environ
+
+### Flask Compatibility (CRITICAL — we use Flask 3.x)
+- NEVER use @app.before_first_request — it was REMOVED in Flask 2.3. Use `with app.app_context(): db.create_all()` inside create_app() instead.
+- NEVER import `from flask import Markup` — use `from markupsafe import Markup`
+- NEVER import `from flask import _request_ctx_stack` — it was removed
+- Use `app.app_context()` pattern for initialization, NOT before_first_request
+- For database initialization: call `db.create_all()` inside create_app() after registering blueprints
 - Use proper HTML meta tags, responsive design, and accessibility
 - Add loading states, error states, and empty states in UIs
 - Use semantic HTML and modern CSS (flexbox, grid, variables)
@@ -331,7 +340,9 @@ RULES:
 - For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))
 - Use modern, responsive UI with gradients, shadows, and glassmorphism
 - Include proper error handling in every file
-- Make sure cross-file imports are correct (e.g., from app.models import User)"""
+- Make sure cross-file imports are correct (e.g., from app.models import User)
+- Flask 3.x compatibility: NEVER use @app.before_first_request (removed). Use `with app.app_context(): db.create_all()` in create_app() instead.
+- NEVER import Markup from flask — use `from markupsafe import Markup`"""
 
 
 @ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['GET'])
@@ -459,6 +470,44 @@ def parse_agent_json(response_text):
     return None
 
 
+def sanitize_flask_code(content, file_path):
+    """Fix deprecated Flask 3.x patterns in generated Python code."""
+    if not file_path.endswith('.py'):
+        return content
+    # Replace @app.before_first_request with app_context pattern
+    if 'before_first_request' in content:
+        # Remove the decorator line
+        content = re.sub(r'\s*@\w+\.before_first_request\s*\n', '\n', content)
+        # If there's a def create_tables function that just calls db.create_all(),
+        # we'll handle that in the create_app function
+        content = re.sub(
+            r'def\s+create_tables\(\):\s*\n\s+db\.create_all\(\)\s*\n',
+            '',
+            content
+        )
+        # Ensure db.create_all() is in create_app with app_context
+        if 'def create_app' in content and 'db.create_all()' not in content:
+            content = re.sub(
+                r'(return\s+app)',
+                '    with app.app_context():\n        db.create_all()\n\n    \\1',
+                content,
+                count=1
+            )
+        elif 'def create_app' in content and 'db.create_all()' in content and 'app_context' not in content:
+            # db.create_all() exists but not wrapped in app_context — wrap it
+            content = re.sub(
+                r'(\s+)(db\.create_all\(\))',
+                '\\1with app.app_context():\n\\1    db.create_all()',
+                content,
+                count=1
+            )
+    # Fix Markup import
+    content = content.replace('from flask import Markup', 'from markupsafe import Markup')
+    # Fix _request_ctx_stack import
+    content = content.replace('from flask import _request_ctx_stack', '# _request_ctx_stack removed in Flask 2.3+')
+    return content
+
+
 def apply_file_changes(project_path, files_list):
     """Apply file changes from agent response to disk."""
     created_files = []
@@ -468,6 +517,9 @@ def apply_file_changes(project_path, files_list):
         file_rel_path = file_info.get('path', '')
         file_content = file_info.get('content', '')
         action = file_info.get('action', 'create')
+
+        # Sanitize Flask code for compatibility
+        file_content = sanitize_flask_code(file_content, file_rel_path)
 
         if not file_rel_path:
             continue
