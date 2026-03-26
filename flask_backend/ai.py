@@ -478,18 +478,18 @@ def sanitize_flask_code(content, file_path):
     if 'before_first_request' in content:
         # Remove the decorator line
         content = re.sub(r'\s*@\w+\.before_first_request\s*\n', '\n', content)
-        # If there's a def create_tables function that just calls db.create_all(),
-        # we'll handle that in the create_app function
+        # Remove the decorated function (e.g. def create_tables(): db.create_all())
         content = re.sub(
-            r'def\s+create_tables\(\):\s*\n\s+db\.create_all\(\)\s*\n',
-            '',
+            r'\s*def\s+\w*(?:create_tables|init_db|setup_db)\w*\(\):\s*\n\s+db\.create_all\(\)\s*\n',
+            '\n',
             content
         )
         # Ensure db.create_all() is in create_app with app_context
         if 'def create_app' in content and 'db.create_all()' not in content:
+            # Find the return app line and add db.create_all() before it
             content = re.sub(
-                r'(return\s+app)',
-                '    with app.app_context():\n        db.create_all()\n\n    \\1',
+                r'(\n(\s+))(return\s+app)',
+                r'\1with app.app_context():\n\2    db.create_all()\n\1\3',
                 content,
                 count=1
             )
@@ -501,8 +501,19 @@ def sanitize_flask_code(content, file_path):
                 content,
                 count=1
             )
-    # Fix Markup import
+    # Fix Markup import — handle both standalone and comma-separated imports
     content = content.replace('from flask import Markup', 'from markupsafe import Markup')
+    # Handle comma-separated: from flask import Flask, Markup, ...
+    content = re.sub(
+        r'(from flask import .+),\s*Markup',
+        r'\1\nfrom markupsafe import Markup',
+        content
+    )
+    content = re.sub(
+        r'from flask import Markup,\s*',
+        'from markupsafe import Markup\nfrom flask import ',
+        content
+    )
     # Fix _request_ctx_stack import
     content = content.replace('from flask import _request_ctx_stack', '# _request_ctx_stack removed in Flask 2.3+')
     return content
