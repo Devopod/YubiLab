@@ -7,7 +7,7 @@ function apiFetch(url, options = {}) {
         const xhr = new XMLHttpRequest();
         const method = (options.method || 'GET').toUpperCase();
         xhr.open(method, url, true);
-        xhr.timeout = options.timeout || 30000;
+        xhr.timeout = options.timeout || 120000;  // 2 min default (agent calls pass 10 min)
 
         // Set headers
         if (options.headers) {

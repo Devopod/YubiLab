@@ -556,7 +556,7 @@ IMPORTANT: Only modify files that need fixing. Do NOT regenerate files that are 
 
         if 'error' in result:
             add_step('Calling YubiAI', 'failed', result['error'], time.time() - step_start)
-            return jsonify({'error': result['error'], 'steps': steps}), 500
+            return jsonify({'error': result['error'], 'agent_executed': False, 'steps': steps})
 
         response_text = result.get('response', '')
         try:
@@ -600,30 +600,33 @@ Plan this project. List ALL files needed, grouped into logical batches. Do NOT w
         plan_result = call_yubiai(plan_prompt, system_prompt=AGENT_PLAN_PROMPT, max_tokens=8192)
 
         if 'error' in plan_result:
-            add_step('Planning project', 'failed', plan_result['error'], time.time() - step_start)
-            return jsonify({'error': plan_result['error'], 'steps': steps}), 500
-
-        try:
-            plan_response = parse_agent_json(plan_result.get('response', ''))
-            if not plan_response or not plan_response.get('file_groups'):
-                # Fallback: if plan doesn't have file_groups, treat as single-request
-                add_step('Planning project', 'done', 'Falling back to single-request mode', time.time() - step_start)
-                is_large = False  # Will fall through to single-request below
-                plan_response = None
-            else:
-                file_groups = plan_response.get('file_groups', [])
-                total_files = sum(len(g.get('files', [])) for g in file_groups)
-                roadmap = plan_response.get('roadmap', [])
-                run_command = plan_response.get('run_command', '')
-                install_cmd = plan_response.get('install_command', '')
-                test_cmd = plan_response.get('test_command', '')
-                add_step('Planning project', 'done',
-                         f'{total_files} files in {len(file_groups)} groups, {len(roadmap)} steps',
-                         time.time() - step_start)
-        except (json.JSONDecodeError, Exception) as e:
-            add_step('Planning project', 'done', f'Fallback to single-request: {str(e)[:50]}', time.time() - step_start)
+            # Don't abort — fall back to single-request mode
+            add_step('Planning project', 'failed', f'Fallback: {plan_result["error"][:80]}', time.time() - step_start)
             is_large = False
             plan_response = None
+
+        if is_large:
+            try:
+                plan_response = parse_agent_json(plan_result.get('response', ''))
+                if not plan_response or not plan_response.get('file_groups'):
+                    # Fallback: if plan doesn't have file_groups, treat as single-request
+                    add_step('Planning project', 'done', 'Falling back to single-request mode', time.time() - step_start)
+                    is_large = False  # Will fall through to single-request below
+                    plan_response = None
+                else:
+                    file_groups = plan_response.get('file_groups', [])
+                    total_files = sum(len(g.get('files', [])) for g in file_groups)
+                    roadmap = plan_response.get('roadmap', [])
+                    run_command = plan_response.get('run_command', '')
+                    install_cmd = plan_response.get('install_command', '')
+                    test_cmd = plan_response.get('test_command', '')
+                    add_step('Planning project', 'done',
+                             f'{total_files} files in {len(file_groups)} groups, {len(roadmap)} steps',
+                             time.time() - step_start)
+            except (json.JSONDecodeError, Exception) as e:
+                add_step('Planning project', 'done', f'Fallback to single-request: {str(e)[:50]}', time.time() - step_start)
+                is_large = False
+                plan_response = None
 
         # Phase 2: Generate files in batches
         if is_large and plan_response:
@@ -694,7 +697,7 @@ User request: {prompt}"""
 
         if 'error' in result:
             add_step('Calling YubiAI', 'failed', result['error'], time.time() - step_start)
-            return jsonify({'error': result['error'], 'steps': steps}), 500
+            return jsonify({'error': result['error'], 'agent_executed': False, 'steps': steps})
 
         response_text = result.get('response', '')
         try:
