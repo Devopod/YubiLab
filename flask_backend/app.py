@@ -198,7 +198,7 @@ def preview_app(project_id, path):
 
         return Response(content, status=resp.status_code, headers=resp_headers)
     except req.exceptions.ConnectionError:
-        return '''<html><head><meta http-equiv="refresh" content="2"></head>
+        return '''<html><head><meta http-equiv="refresh" content="1"></head>
 <body style="background:#0d1117;color:#8b949e;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
 <div style="text-align:center">
 <div style="width:40px;height:40px;border:3px solid #30363d;border-top:3px solid #58a6ff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>

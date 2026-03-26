@@ -233,9 +233,9 @@ def deploy_project_internal(user, project_id, project_path, run_command_override
         conn.commit()
         conn.close()
 
-        # Wait for the app to be ready (up to 8 seconds)
+        # Wait for the app to be ready (up to 30 seconds — pip install can take a while)
         ready = False
-        for _ in range(16):
+        for _ in range(60):
             time.sleep(0.5)
             try:
                 s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
