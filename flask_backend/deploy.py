@@ -11,6 +11,32 @@ import time
 deploy_bp = Blueprint('deploy', __name__)
 
 
+_NON_PIP_PACKAGES = {
+    'bootstrap', 'jquery', 'tailwindcss', 'tailwind', 'font-awesome',
+    'fontawesome', 'bulma', 'materialize', 'react', 'vue', 'angular',
+    'alpinejs', 'htmx', 'popper.js', 'animate.css', 'sweetalert2',
+}
+
+
+def _sanitize_requirements_file(project_path):
+    """Remove non-pip packages (Bootstrap, jQuery, etc.) from requirements.txt."""
+    req_path = os.path.join(project_path, 'requirements.txt')
+    if not os.path.isfile(req_path):
+        return
+    try:
+        with open(req_path, 'r') as f:
+            lines = f.readlines()
+        cleaned = []
+        for line in lines:
+            pkg = line.strip().split('==')[0].split('>=')[0].split('<=')[0].split('~=')[0].strip().lower()
+            if pkg and pkg not in _NON_PIP_PACKAGES:
+                cleaned.append(line)
+        with open(req_path, 'w') as f:
+            f.writelines(cleaned)
+    except Exception:
+        pass
+
+
 def find_free_port(start=3002, end=9000):
     """Find a free port in the given range."""
     for port in range(start, end):
@@ -35,7 +61,10 @@ def detect_run_command(project_path, language):
 
     # Check if requirements.txt exists and needs installing
     needs_install = 'requirements.txt' in files
-    install_prefix = 'pip install -q -r requirements.txt && ' if needs_install else ''
+    if needs_install:
+        # Sanitize requirements.txt — remove non-pip packages like Bootstrap
+        _sanitize_requirements_file(project_path)
+    install_prefix = 'pip install -q --upgrade -r requirements.txt && ' if needs_install else ''
 
     if language == 'python' or any(f.endswith('.py') for f in files):
         # Check for Streamlit apps (check file contents for streamlit import)

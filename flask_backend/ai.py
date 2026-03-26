@@ -98,6 +98,39 @@ def get_project_files_context(project_path, max_file_size=10000):
     return files_context, file_list
 
 
+# Non-pip packages that AI sometimes puts in requirements.txt
+NON_PIP_PACKAGES = {
+    'bootstrap', 'jquery', 'tailwindcss', 'tailwind', 'font-awesome',
+    'fontawesome', 'bulma', 'materialize', 'react', 'vue', 'angular',
+    'alpinejs', 'htmx', 'popper.js', 'animate.css', 'sweetalert2',
+}
+
+
+def sanitize_requirements(project_path):
+    """Remove non-pip packages (like Bootstrap) from requirements.txt.
+    Returns True if the file was modified."""
+    req_path = os.path.join(project_path, 'requirements.txt')
+    if not os.path.isfile(req_path):
+        return False
+    try:
+        with open(req_path, 'r') as f:
+            lines = f.readlines()
+        cleaned = []
+        modified = False
+        for line in lines:
+            pkg = line.strip().split('==')[0].split('>=')[0].split('<=')[0].split('~=')[0].strip().lower()
+            if pkg in NON_PIP_PACKAGES:
+                modified = True
+            else:
+                cleaned.append(line)
+        if modified:
+            with open(req_path, 'w') as f:
+                f.writelines(cleaned)
+        return modified
+    except Exception:
+        return False
+
+
 def execute_test_command(project_path, command, timeout=30):
     """Execute a test command in the project directory and return output."""
     env = os.environ.copy()
@@ -190,6 +223,7 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Write clean, production-ready code with proper error handling
 - Include all necessary imports at the top of files
 - Add requirements.txt with pinned versions when using pip packages
+- NEVER put CSS/JS frameworks (Bootstrap, jQuery, Tailwind, etc.) in requirements.txt — they are loaded via CDN in HTML, not pip
 - Follow best practices for each language/framework
 - Use proper HTML meta tags, responsive design, and accessibility
 - Add loading states, error states, and empty states in UIs
@@ -265,8 +299,10 @@ RULES:
 - List EVERY file the project needs — don't skip any
 - Include config files (requirements.txt, package.json, etc.)
 - Include proper run_command, test_command, and install_command
+- NEVER put CSS/JS frameworks (Bootstrap, jQuery, Tailwind) in requirements.txt — use CDN links in HTML
 - Port rules: NEVER use 5000 or 3001. Use PORT env var, default 3002.
-- For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))"""
+- For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))
+- Always include `import os` in run.py when using os.environ"""
 
 
 # Batch generation prompt for multi-request agent
@@ -731,7 +767,13 @@ User request: {prompt}"""
     install_result = None
     if install_cmd and all_files:
         step_start = time.time()
-        install_result = execute_test_command(project_path, install_cmd, timeout=120)
+        # Clean non-pip packages (e.g. Bootstrap) from requirements.txt
+        sanitize_requirements(project_path)
+        # Use --upgrade to avoid version conflicts with system packages
+        safe_install_cmd = install_cmd
+        if 'pip install' in safe_install_cmd and '--upgrade' not in safe_install_cmd:
+            safe_install_cmd = safe_install_cmd.replace('pip install', 'pip install --upgrade')
+        install_result = execute_test_command(project_path, safe_install_cmd, timeout=120)
         status = 'done' if install_result['success'] else 'failed'
         detail = 'Dependencies installed' if install_result['success'] else (install_result.get('stderr', '') or install_result.get('stdout', ''))[:200]
         add_step('Installing dependencies', status, detail, time.time() - step_start)
