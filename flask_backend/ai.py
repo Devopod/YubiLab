@@ -516,6 +516,32 @@ def sanitize_flask_code(content, file_path):
     )
     # Fix _request_ctx_stack import
     content = content.replace('from flask import _request_ctx_stack', '# _request_ctx_stack removed in Flask 2.3+')
+    # Fix db.create_all() before models are imported — ensure models import comes before create_all
+    if 'def create_app' in content and 'db.create_all()' in content:
+        # Check if db.create_all() appears before any blueprint/route registration
+        create_all_pos = content.find('db.create_all()')
+        register_bp_pos = content.find('register_blueprint')
+        import_models_pos = content.find('from . import models')
+        from_models_pos = content.find('from .models import')
+        # If create_all comes before blueprint registration and no explicit models import before it
+        if register_bp_pos > 0 and create_all_pos < register_bp_pos:
+            if import_models_pos < 0 or import_models_pos > create_all_pos:
+                if from_models_pos < 0 or from_models_pos > create_all_pos:
+                    # Move db.create_all() block after blueprint registration
+                    # Remove existing db.create_all() with its context manager
+                    content = re.sub(
+                        r'\n\s+(?:# .*\n\s+)?with app\.app_context\(\):\s*\n\s+db\.create_all\(\)\s*\n',
+                        '\n',
+                        content,
+                        count=1
+                    )
+                    # Add it back after the last register_blueprint call
+                    content = re.sub(
+                        r'(app\.register_blueprint\([^)]+\)\s*\n)',
+                        r'\1\n    # Import models so SQLAlchemy knows about them, then create tables\n    with app.app_context():\n        from . import models  # noqa: F401\n        db.create_all()\n',
+                        content,
+                        count=1
+                    )
     return content
 
 
