@@ -253,6 +253,7 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — NEVER use bare {{ csrf_token() }} without the hidden input wrapper
 - For the index route (/): ALWAYS redirect to login page if user is not authenticated, redirect to main app page if authenticated. NEVER just render base.html as the index.
 - Do NOT create a separate main.py with a simple hello-world app. Use run.py with create_app() factory pattern.
+- For login/signup forms: Let forms submit normally via HTML form action (method="POST"). Do NOT generate separate auth.js that intercepts form submission with fetch() — this breaks CSRF and prevents normal form POST from working. If you must use JS, make sure it handles CSRF tokens and form data correctly.
 - Use proper HTML meta tags, responsive design, and accessibility
 - Add loading states, error states, and empty states in UIs
 - Use semantic HTML and modern CSS (flexbox, grid, variables)
@@ -338,7 +339,8 @@ RULES:
 - In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this prevents ALL template tags from working
 - For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — never bare {{ csrf_token() }}
 - The index route (/) should redirect to login if not authenticated, not just render base.html
-- Do NOT create a separate main.py stub — use run.py with create_app() factory"""
+- Do NOT create a separate main.py stub — use run.py with create_app() factory
+- For login/signup forms: Let forms POST normally via HTML action. Do NOT generate auth.js that intercepts submission with fetch() — it breaks CSRF"""
 
 
 # Batch generation prompt for multi-request agent
@@ -375,7 +377,8 @@ RULES:
 - For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — never bare {{ csrf_token() }}
 - The index route (/) should redirect to login if not authenticated
 - Do NOT create a separate main.py hello-world stub — use run.py with create_app() factory
-- For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without == to avoid conflicts"""
+- For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without == to avoid conflicts
+- For login/signup forms: Let forms POST normally via HTML action. Do NOT generate auth.js that intercepts submission with fetch() — it breaks CSRF"""
 
 
 @ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['GET'])
@@ -543,6 +546,25 @@ def sanitize_jinja_templates(content, file_path):
         '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>',
         content
     )
+
+    # === FIX 4: Remove auth.js script references from login/signup templates ===
+    # AI sometimes generates auth.js that hijacks form submissions with fetch(),
+    # preventing normal form POST from working. Remove the script tag so forms
+    # submit naturally via HTML form action.
+    basename = os.path.basename(file_path).lower()
+    if basename in ('login.html', 'signup.html', 'register.html', 'signin.html'):
+        # Remove script tags referencing auth.js
+        content = re.sub(
+            r'<script\s+src=["\'].*?auth\.js["\'].*?></script>\s*',
+            '',
+            content
+        )
+        # Remove {% block scripts %} that only contains auth.js reference
+        content = re.sub(
+            r'\{%\s*block\s+scripts\s*%\}\s*<script\s+src=["\'].*?auth\.js["\'].*?></script>\s*\{%\s*endblock\s*%\}\s*',
+            '{% block scripts %}\n{% endblock %}\n',
+            content
+        )
 
     return content
 
