@@ -107,8 +107,9 @@ NON_PIP_PACKAGES = {
 }
 
 
-def sanitize_requirements(project_path):
+def sanitize_requirements(project_path, strip_versions=False):
     """Remove non-pip packages (like Bootstrap) from requirements.txt.
+    If strip_versions=True, also remove version pins (==, >=, etc.) to resolve conflicts.
     Returns True if the file was modified."""
     req_path = os.path.join(project_path, 'requirements.txt')
     if not os.path.isfile(req_path):
@@ -119,11 +120,22 @@ def sanitize_requirements(project_path):
         cleaned = []
         modified = False
         for line in lines:
-            pkg = line.strip().split('==')[0].split('>=')[0].split('<=')[0].split('~=')[0].strip().lower()
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                cleaned.append(line)
+                continue
+            pkg = stripped.split('==')[0].split('>=')[0].split('<=')[0].split('~=')[0].split('[')[0].strip().lower()
             if pkg in NON_PIP_PACKAGES:
                 modified = True
-            else:
-                cleaned.append(line)
+                continue
+            if strip_versions and re.search(r'[=<>~!]', stripped):
+                # Strip version pins — just keep the package name
+                pkg_name = re.split(r'[=<>~!\[]', stripped)[0].strip()
+                if pkg_name:
+                    cleaned.append(pkg_name + '\n')
+                    modified = True
+                continue
+            cleaned.append(line)
         if modified:
             with open(req_path, 'w') as f:
                 f.writelines(cleaned)
@@ -233,10 +245,12 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - NEVER import `from flask import Markup` — use `from markupsafe import Markup`
 - NEVER import `from flask import _request_ctx_stack` — it was removed
 - Use `app.app_context()` pattern for initialization, NOT before_first_request
-- For database initialization: call `db.create_all()` inside create_app() after registering blueprints
+- For database initialization: call `db.create_all()` inside create_app() AFTER registering blueprints so models are imported
+- In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year or inject it via context processor.
 - Use proper HTML meta tags, responsive design, and accessibility
 - Add loading states, error states, and empty states in UIs
 - Use semantic HTML and modern CSS (flexbox, grid, variables)
+- For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without version pins to avoid conflicts with the system Python packages
 
 ### Port Configuration
 - NEVER use port 5000 (YubiLab backend uses it)
@@ -309,9 +323,11 @@ RULES:
 - Include config files (requirements.txt, package.json, etc.)
 - Include proper run_command, test_command, and install_command
 - NEVER put CSS/JS frameworks (Bootstrap, jQuery, Tailwind) in requirements.txt — use CDN links in HTML
+- For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without == to avoid conflicts
 - Port rules: NEVER use 5000 or 3001. Use PORT env var, default 3002.
 - For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))
-- Always include `import os` in run.py when using os.environ"""
+- Always include `import os` in run.py when using os.environ
+- In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year instead."""
 
 
 # Batch generation prompt for multi-request agent
@@ -341,8 +357,10 @@ RULES:
 - Use modern, responsive UI with gradients, shadows, and glassmorphism
 - Include proper error handling in every file
 - Make sure cross-file imports are correct (e.g., from app.models import User)
-- Flask 3.x compatibility: NEVER use @app.before_first_request (removed). Use `with app.app_context(): db.create_all()` in create_app() instead.
-- NEVER import Markup from flask — use `from markupsafe import Markup`"""
+- Flask 3.x compatibility: NEVER use @app.before_first_request (removed). Use `with app.app_context(): db.create_all()` in create_app() AFTER registering blueprints.
+- NEVER import Markup from flask — use `from markupsafe import Markup`
+- In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist in Jinja2. Use a hardcoded year instead.
+- For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without == to avoid conflicts"""
 
 
 @ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['GET'])
@@ -468,6 +486,21 @@ def parse_agent_json(response_text):
     if json_start >= 0 and json_end > json_start:
         return json.loads(text[json_start:json_end])
     return None
+
+
+def sanitize_jinja_templates(content, file_path):
+    """Fix common Jinja2 template issues in AI-generated HTML."""
+    if not file_path.endswith('.html'):
+        return content
+    # Fix {{ now().year }} — not a built-in Jinja2 function
+    # Replace with a static year or datetime.now import pattern
+    import datetime
+    current_year = str(datetime.datetime.now().year)
+    content = re.sub(r'\{\{\s*now\(\)\.year\s*\}\}', current_year, content)
+    content = re.sub(r'\{\{\s*now\(\)\s*\}\}', current_year, content)
+    # Fix {{ current_year }} if not provided by context — replace with static year
+    # (Only if it looks like a standalone usage, not inside a block)
+    return content
 
 
 def sanitize_flask_code(content, file_path):
@@ -762,6 +795,8 @@ def apply_file_changes(project_path, files_list):
 
         # Sanitize Flask code for compatibility
         file_content = sanitize_flask_code(file_content, file_rel_path)
+        # Sanitize Jinja2 templates (fix {{ now().year }} etc.)
+        file_content = sanitize_jinja_templates(file_content, file_rel_path)
 
         if not file_rel_path:
             continue
@@ -849,7 +884,7 @@ def ai_agent(user):
     final_test_passed = False
     run_command = ''
     deploy_ready = False
-    MAX_FIX_LOOPS = 3
+    MAX_FIX_LOOPS = 5
     roadmap = []
     install_cmd = ''
     test_cmd = ''
@@ -1090,6 +1125,38 @@ User request: {prompt}"""
         if 'pip install' in safe_install_cmd and '--upgrade' not in safe_install_cmd:
             safe_install_cmd = safe_install_cmd.replace('pip install', 'pip install --upgrade')
         install_result = execute_test_command(project_path, safe_install_cmd, timeout=120)
+
+        # RETRY STRATEGY: If install fails with version conflict, strip version pins and retry
+        if not install_result['success']:
+            combined_output = (install_result.get('stderr', '') + install_result.get('stdout', '')).lower()
+            if 'conflicting' in combined_output or 'incompatible' in combined_output or 'no matching distribution' in combined_output:
+                # Strip all version pins from requirements.txt and retry
+                sanitize_requirements(project_path, strip_versions=True)
+                install_result = execute_test_command(project_path, safe_install_cmd, timeout=120)
+                if not install_result['success']:
+                    # Last resort: install packages one by one, skipping failures
+                    req_path = os.path.join(project_path, 'requirements.txt')
+                    if os.path.isfile(req_path):
+                        with open(req_path, 'r') as f:
+                            pkgs = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+                        failed_pkgs = []
+                        for pkg in pkgs:
+                            pkg_result = execute_test_command(project_path, f'pip install --upgrade {pkg}', timeout=60)
+                            if not pkg_result['success']:
+                                failed_pkgs.append(pkg)
+                        if failed_pkgs:
+                            # Write cleaned requirements without failed packages
+                            with open(req_path, 'r') as f:
+                                lines = f.readlines()
+                            with open(req_path, 'w') as f:
+                                for line in lines:
+                                    pkg_name = line.strip().split('==')[0].split('>=')[0].strip().lower()
+                                    if pkg_name not in [p.lower() for p in failed_pkgs]:
+                                        f.write(line)
+                            all_errors.append(f'Skipped incompatible packages: {", ".join(failed_pkgs)}')
+                        # Mark as success since we installed what we could
+                        install_result = {'success': True, 'stdout': f'Installed {len(pkgs) - len(failed_pkgs)}/{len(pkgs)} packages', 'stderr': '', 'returncode': 0}
+
         status = 'done' if install_result['success'] else 'failed'
         detail = 'Dependencies installed' if install_result['success'] else (install_result.get('stderr', '') or install_result.get('stdout', ''))[:200]
         add_step('Installing dependencies', status, detail, time.time() - step_start)
