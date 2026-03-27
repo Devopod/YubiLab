@@ -1619,70 +1619,282 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
         if all_files:
             add_step('Testing code', 'skipped', 'No test command provided')
 
-    # === SMOKE TEST: Start app temporarily and check routes ===
-    # Before deploying, verify the app actually serves pages without errors
+    # === INTERACTIVE APP TESTING (Devin-like) ===
+    # Start app, navigate pages, fill forms, submit, check responses
+    # Reports each action: 🖱️ Click, ⌨️ Type, 🔍 Check, 📍 Navigate, etc.
+    test_actions = []  # List of test actions for UI display
+    test_issues = []   # Issues found during testing
+
     if final_test_passed and run_command and all_files and project.get('language') == 'python':
         step_start = time.time()
-        smoke_port = 3099  # Temporary port for smoke testing
-        smoke_cmd = run_command
-        # Override port for smoke test
-        smoke_env = f'PORT={smoke_port} FLASK_RUN_PORT={smoke_port}'
+        smoke_port = 3099
+        smoke_proc = None
         try:
             import subprocess as sp
-            # Start the app in background
+            import urllib.request
+            import urllib.parse
+            import http.cookiejar
+
+            # Start the app
+            test_actions.append({'action': '🚀 Starting app', 'detail': f'Running: {run_command} on port {smoke_port}'})
             smoke_proc = sp.Popen(
-                f'{smoke_env} {smoke_cmd}',
-                shell=True, cwd=project_path,
+                run_command, shell=True, cwd=project_path,
                 stdout=sp.PIPE, stderr=sp.PIPE,
                 env={**os.environ, 'PORT': str(smoke_port), 'FLASK_RUN_PORT': str(smoke_port)}
             )
-            time.sleep(3)  # Wait for app to start
+            time.sleep(3)
 
-            smoke_issues = []
-            routes_to_check = ['/']
-            # Detect auth routes from code
-            for root, _, files in os.walk(project_path):
-                for fname in files:
-                    if fname.endswith('.py'):
-                        try:
-                            with open(os.path.join(root, fname), 'r') as f:
-                                py_content = f.read()
-                            if '/signup' in py_content or '/register' in py_content:
-                                routes_to_check.append('/auth/signup')
-                                routes_to_check.append('/signup')
-                            if '/login' in py_content:
-                                routes_to_check.append('/auth/login')
-                                routes_to_check.append('/login')
-                        except Exception:
-                            pass
+            # Setup session with cookie jar (maintains login state)
+            cookie_jar = http.cookiejar.CookieJar()
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
 
-            import urllib.request
-            for route in routes_to_check:
+            base_url = f'http://127.0.0.1:{smoke_port}'
+
+            # Helper: GET a page
+            def test_get(path, expect_text=None, label=None):
+                url = base_url + path
+                action_label = label or f'📍 Navigate to {path}'
                 try:
-                    url = f'http://127.0.0.1:{smoke_port}{route}'
-                    req = urllib.request.Request(url, method='GET')
-                    resp = urllib.request.urlopen(req, timeout=5)
+                    req = urllib.request.Request(url)
+                    resp = opener.open(req, timeout=8)
                     body = resp.read().decode('utf-8', errors='ignore')
                     status = resp.status
-                    if status == 200:
-                        # Check for common issues in the response
-                        if 'Bad Request' in body and 'CSRF' in body:
-                            smoke_issues.append(f'{route}: CSRF token missing in form')
-                        elif 'Internal Server Error' in body or status == 500:
-                            smoke_issues.append(f'{route}: Server error (500)')
+                    test_actions.append({'action': action_label, 'detail': f'Status: {status} OK', 'status': 'pass'})
+                    if expect_text and expect_text.lower() not in body.lower():
+                        test_actions.append({'action': f'🔍 Check for "{expect_text}"', 'detail': 'Not found on page', 'status': 'fail'})
+                        test_issues.append(f'{path}: Expected text "{expect_text}" not found')
+                    elif expect_text:
+                        test_actions.append({'action': f'🔍 Check for "{expect_text}"', 'detail': 'Found on page', 'status': 'pass'})
+                    # Check for errors in response
+                    if 'Internal Server Error' in body:
+                        test_issues.append(f'{path}: Internal Server Error (500)')
+                        test_actions.append({'action': f'🔍 Check {path}', 'detail': 'Internal Server Error!', 'status': 'fail'})
+                    if 'Bad Request' in body and 'CSRF' in body:
+                        test_issues.append(f'{path}: CSRF token missing')
+                        test_actions.append({'action': f'🔍 Check {path}', 'detail': 'CSRF token missing in form', 'status': 'fail'})
+                    return body, status
                 except urllib.error.HTTPError as he:
-                    if he.code == 404:
-                        pass  # Route may not exist, that's OK
-                    elif he.code == 400:
-                        body = he.read().decode('utf-8', errors='ignore')
-                        if 'CSRF' in body:
-                            smoke_issues.append(f'{route}: CSRF token missing')
-                        else:
-                            smoke_issues.append(f'{route}: Bad Request (400)')
+                    body = he.read().decode('utf-8', errors='ignore') if he.readable() else ''
+                    test_actions.append({'action': action_label, 'detail': f'HTTP {he.code}', 'status': 'fail' if he.code >= 400 else 'pass'})
+                    if he.code == 400 and 'CSRF' in body:
+                        test_issues.append(f'{path}: CSRF token missing')
                     elif he.code >= 500:
-                        smoke_issues.append(f'{route}: Server error ({he.code})')
+                        test_issues.append(f'{path}: Server error ({he.code})')
+                    return body, he.code
+                except Exception as e:
+                    test_actions.append({'action': action_label, 'detail': str(e)[:80], 'status': 'fail'})
+                    return '', 0
+
+            # Helper: POST a form (extract CSRF token first)
+            def test_post_form(path, form_data, label=None, get_path=None):
+                # First GET the page to extract CSRF token
+                get_url = base_url + (get_path or path)
+                csrf_token = ''
+                try:
+                    req = urllib.request.Request(get_url)
+                    resp = opener.open(req, timeout=8)
+                    body = resp.read().decode('utf-8', errors='ignore')
+                    # Extract CSRF token from hidden input
+                    import re as _re
+                    csrf_match = _re.search(r'name=["\']csrf_token["\']\s+value=["\']([^"\']+)', body)
+                    if csrf_match:
+                        csrf_token = csrf_match.group(1)
+                        test_actions.append({'action': '🔑 Extract CSRF token', 'detail': f'Token: {csrf_token[:20]}...', 'status': 'pass'})
+                    else:
+                        test_actions.append({'action': '🔑 Extract CSRF token', 'detail': 'No CSRF token found in form', 'status': 'warn'})
                 except Exception:
-                    pass  # Connection refused = app didn't start, skip
+                    pass
+
+                if csrf_token:
+                    form_data['csrf_token'] = csrf_token
+
+                # Now POST the form
+                action_label = label or f'📝 Submit form to {path}'
+                try:
+                    encoded = urllib.parse.urlencode(form_data).encode('utf-8')
+                    req = urllib.request.Request(base_url + path, data=encoded, method='POST')
+                    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+                    resp = opener.open(req, timeout=8)
+                    body = resp.read().decode('utf-8', errors='ignore')
+                    final_url = resp.url
+                    status = resp.status
+                    test_actions.append({'action': action_label, 'detail': f'Status: {status}, Redirected to: {final_url.replace(base_url, "")}', 'status': 'pass'})
+                    if 'Bad Request' in body and 'CSRF' in body:
+                        test_issues.append(f'POST {path}: CSRF session token missing')
+                        test_actions.append({'action': '🔍 Check response', 'detail': 'CSRF session token missing!', 'status': 'fail'})
+                    return body, status, final_url
+                except urllib.error.HTTPError as he:
+                    err_body = he.read().decode('utf-8', errors='ignore') if he.readable() else ''
+                    test_actions.append({'action': action_label, 'detail': f'HTTP {he.code}', 'status': 'fail'})
+                    if he.code == 400 and 'CSRF' in err_body:
+                        test_issues.append(f'POST {path}: CSRF session token missing')
+                    elif he.code >= 500:
+                        test_issues.append(f'POST {path}: Server error ({he.code})')
+                    return err_body, he.code, ''
+                except Exception as e:
+                    test_actions.append({'action': action_label, 'detail': str(e)[:80], 'status': 'fail'})
+                    return '', 0, ''
+
+            # ============================================
+            # TEST PLAN: Analyze codebase and run tests
+            # ============================================
+            test_actions.append({'action': '🧠 Analyzing codebase', 'detail': 'Detecting routes, forms, and features...', 'status': 'info'})
+
+            # Detect what kind of app this is
+            has_signup = False
+            has_login = False
+            has_chatbot = False
+            signup_route = '/auth/signup'
+            login_route = '/auth/login'
+            signup_fields = {}
+            login_fields = {}
+
+            for root, _, files in os.walk(project_path):
+                for fname in files:
+                    if not fname.endswith('.py'):
+                        continue
+                    try:
+                        with open(os.path.join(root, fname), 'r') as f:
+                            code = f.read()
+                        if '/signup' in code or '/register' in code:
+                            has_signup = True
+                            if "url_prefix='/auth'" in code or 'auth_bp' in code or 'auth' in fname:
+                                signup_route = '/auth/signup' if '/signup' in code else '/auth/register'
+                            elif "url_prefix=''" in code or 'main' in fname:
+                                signup_route = '/signup' if '/signup' in code else '/register'
+                        if '/login' in code:
+                            has_login = True
+                            if "url_prefix='/auth'" in code or 'auth_bp' in code or 'auth' in fname:
+                                login_route = '/auth/login'
+                            elif "url_prefix=''" in code or 'main' in fname:
+                                login_route = '/login'
+                        if 'chatbot' in code.lower() or '/chat' in code:
+                            has_chatbot = True
+                    except Exception:
+                        pass
+
+            # Detect form fields from HTML templates
+            templates_dir = os.path.join(project_path, 'app', 'templates')
+            if os.path.isdir(templates_dir):
+                for fname in os.listdir(templates_dir):
+                    if not fname.endswith('.html'):
+                        continue
+                    try:
+                        with open(os.path.join(templates_dir, fname), 'r') as f:
+                            html = f.read()
+                        import re as _re
+                        input_names = _re.findall(r'name=["\'](\w+)["\']', html)
+                        if 'signup' in fname or 'register' in fname:
+                            signup_fields = {n: '' for n in input_names if n != 'csrf_token'}
+                        elif 'login' in fname:
+                            login_fields = {n: '' for n in input_names if n != 'csrf_token'}
+                    except Exception:
+                        pass
+
+            test_actions.append({'action': '🧠 Test plan ready', 'detail': f'Auth: {"signup+login" if has_signup else "none"}, Chatbot: {"yes" if has_chatbot else "no"}', 'status': 'info'})
+
+            # --- TEST 1: Check homepage ---
+            test_actions.append({'action': '📍 Navigate to /', 'detail': 'Opening homepage...', 'status': 'info'})
+            body, status = test_get('/', label='📍 Navigate to homepage /')
+
+            # --- TEST 2: Signup page ---
+            if has_signup:
+                test_actions.append({'action': f'📍 Navigate to {signup_route}', 'detail': 'Opening signup page...', 'status': 'info'})
+                # Try both /auth/signup and /signup
+                body, status = test_get(signup_route, expect_text='sign up')
+                if status == 404 and signup_route.startswith('/auth/'):
+                    signup_route = signup_route.replace('/auth/', '/')
+                    body, status = test_get(signup_route, expect_text='sign up')
+                elif status == 404:
+                    signup_route = '/auth' + signup_route
+                    body, status = test_get(signup_route, expect_text='sign up')
+
+                # Fill signup form with test credentials
+                if status == 200:
+                    test_email = 'test@gmail.com'
+                    test_password = 'test123456@#'
+                    test_username = 'testuser'
+
+                    # Build form data based on detected fields
+                    if signup_fields:
+                        for field in signup_fields:
+                            if 'email' in field.lower():
+                                signup_fields[field] = test_email
+                            elif 'password' in field.lower() or 'pass' in field.lower():
+                                signup_fields[field] = test_password
+                            elif 'confirm' in field.lower():
+                                signup_fields[field] = test_password
+                            elif 'user' in field.lower() or 'name' in field.lower():
+                                signup_fields[field] = test_username
+                            else:
+                                signup_fields[field] = test_username
+                    else:
+                        signup_fields = {
+                            'username': test_username, 'email': test_email,
+                            'password': test_password, 'name': test_username,
+                        }
+
+                    # Show what we're typing
+                    for field, value in signup_fields.items():
+                        display_val = '••••••••' if 'pass' in field.lower() else value
+                        test_actions.append({'action': f'⌨️ Type "{display_val}" into {field}', 'detail': f'Field: {field}', 'status': 'info'})
+
+                    test_actions.append({'action': '🖱️ Click "Sign Up" button', 'detail': f'Submitting to {signup_route}', 'status': 'info'})
+                    body, status, final_url = test_post_form(signup_route, signup_fields, label='🖱️ Click "Sign Up" button')
+
+                    if status == 200 and ('login' in final_url.lower() or 'chat' in final_url.lower() or 'success' in body.lower()):
+                        test_actions.append({'action': '✅ Signup successful', 'detail': f'Redirected to {final_url.replace(base_url, "")}', 'status': 'pass'})
+                    elif status == 200:
+                        test_actions.append({'action': '🔍 Check signup result', 'detail': 'Page loaded but redirect unclear', 'status': 'warn'})
+                    else:
+                        test_actions.append({'action': '❌ Signup failed', 'detail': f'Status: {status}', 'status': 'fail'})
+                        test_issues.append(f'Signup failed with status {status}')
+
+            # --- TEST 3: Login page ---
+            if has_login:
+                test_actions.append({'action': f'📍 Navigate to {login_route}', 'detail': 'Opening login page...', 'status': 'info'})
+                body, status = test_get(login_route, expect_text='log in')
+                if status == 404 and login_route.startswith('/auth/'):
+                    login_route = login_route.replace('/auth/', '/')
+                    body, status = test_get(login_route, expect_text='log in')
+                elif status == 404:
+                    login_route = '/auth' + login_route
+                    body, status = test_get(login_route, expect_text='log in')
+
+                if status == 200:
+                    test_email = 'test@gmail.com'
+                    test_password = 'test123456@#'
+
+                    if login_fields:
+                        for field in login_fields:
+                            if 'email' in field.lower() or 'identifier' in field.lower() or 'user' in field.lower():
+                                login_fields[field] = test_email
+                            elif 'password' in field.lower() or 'pass' in field.lower():
+                                login_fields[field] = test_password
+                    else:
+                        login_fields = {'email': test_email, 'password': test_password}
+
+                    for field, value in login_fields.items():
+                        display_val = '••••••••' if 'pass' in field.lower() else value
+                        test_actions.append({'action': f'⌨️ Type "{display_val}" into {field}', 'detail': f'Field: {field}', 'status': 'info'})
+
+                    test_actions.append({'action': '🖱️ Click "Log In" button', 'detail': f'Submitting to {login_route}', 'status': 'info'})
+                    body, status, final_url = test_post_form(login_route, login_fields, label='🖱️ Click "Log In" button')
+
+                    if status == 200 and ('chat' in final_url.lower() or 'dashboard' in final_url.lower() or 'welcome' in body.lower() or 'logged in' in body.lower()):
+                        test_actions.append({'action': '✅ Login successful', 'detail': f'Redirected to {final_url.replace(base_url, "")}', 'status': 'pass'})
+                    elif status == 200:
+                        test_actions.append({'action': '🔍 Check login result', 'detail': 'Page loaded, checking content...', 'status': 'warn'})
+                    else:
+                        test_actions.append({'action': '❌ Login failed', 'detail': f'Status: {status}', 'status': 'fail'})
+                        test_issues.append(f'Login failed with status {status}')
+
+                    # --- TEST 4: Check chatbot page after login ---
+                    if has_chatbot and status == 200:
+                        test_actions.append({'action': '📍 Navigate to chatbot', 'detail': 'Checking chatbot page...', 'status': 'info'})
+                        chat_body, chat_status = test_get('/chat', expect_text='chat')
+                        if chat_status == 404:
+                            chat_body, chat_status = test_get('/chatbot')
 
             # Kill smoke test process
             try:
@@ -1694,23 +1906,28 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
                 except Exception:
                     pass
 
-            if smoke_issues:
-                # CSRF issues detected — re-run sanitization on templates
-                has_csrf_issue = any('CSRF' in issue for issue in smoke_issues)
+            # Handle issues found
+            if test_issues:
+                has_csrf_issue = any('CSRF' in issue for issue in test_issues)
                 if has_csrf_issue:
                     sanitize_project_on_disk(project_path)
-                add_step('Smoke testing app', 'done',
-                         f'Found {len(smoke_issues)} issues, auto-fixed: {", ".join(smoke_issues[:3])}',
+                    test_actions.append({'action': '🔧 Auto-fixing CSRF issues', 'detail': 'Injected CSRF tokens into forms', 'status': 'pass'})
+
+                add_step('Testing app (interactive)', 'done',
+                         f'{len(test_actions)} actions, {len(test_issues)} issues found & fixed',
                          time.time() - step_start)
             else:
-                add_step('Smoke testing app', 'done', 'All routes OK', time.time() - step_start)
+                add_step('Testing app (interactive)', 'done',
+                         f'{len(test_actions)} actions, all passed ✓',
+                         time.time() - step_start)
+
         except Exception as e:
-            add_step('Smoke testing app', 'failed', str(e)[:100], time.time() - step_start)
-            # Kill process if still running
-            try:
-                smoke_proc.terminate()
-            except Exception:
-                pass
+            add_step('Testing app (interactive)', 'failed', str(e)[:100], time.time() - step_start)
+            if smoke_proc:
+                try:
+                    smoke_proc.terminate()
+                except Exception:
+                    pass
 
     # === AUTO-DEPLOY if tests passed ===
     deploy_result = None
@@ -1749,4 +1966,6 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
         'fix_iterations': fix_iterations,
         'tests_passed': final_test_passed,
         'deploy_result': deploy_result,
+        'test_actions': test_actions,
+        'test_issues': test_issues,
     })

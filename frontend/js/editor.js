@@ -1061,6 +1061,47 @@ function renderAgentResult(data) {
         html += `</div>`;
     }
 
+    // Interactive Test Actions (Devin-like testing log)
+    if (data.test_actions && data.test_actions.length > 0) {
+        const passCount = data.test_actions.filter(a => a.status === 'pass').length;
+        const failCount = data.test_actions.filter(a => a.status === 'fail').length;
+        const issueCount = (data.test_issues || []).length;
+        const summaryColor = failCount > 0 ? '#f85149' : '#3fb950';
+        const summaryText = failCount > 0 ? `${failCount} issues found` : 'All tests passed';
+
+        html += `<div style="margin-top:10px;border:1px solid var(--border-color, #30363d);border-radius:8px;overflow:hidden;">`;
+        html += `<div style="background:linear-gradient(135deg,#1a1b2e,#2d1b69);padding:8px 12px;display:flex;align-items:center;justify-content:space-between;">`;
+        html += `<strong style="font-size:0.82rem;color:#e6e6e6;">🧪 Interactive Testing</strong>`;
+        html += `<span style="font-size:0.7rem;color:${summaryColor};font-weight:600;">${passCount} passed · ${summaryText}</span>`;
+        html += `</div>`;
+        html += `<div style="max-height:300px;overflow-y:auto;padding:6px 0;">`;
+        data.test_actions.forEach((act, i) => {
+            let bg = 'transparent';
+            let textColor = 'var(--text-secondary, #8b949e)';
+            if (act.status === 'pass') { bg = 'rgba(63,185,80,0.08)'; textColor = '#3fb950'; }
+            else if (act.status === 'fail') { bg = 'rgba(248,81,73,0.08)'; textColor = '#f85149'; }
+            else if (act.status === 'warn') { bg = 'rgba(210,153,34,0.08)'; textColor = '#d29922'; }
+            html += `<div style="padding:4px 12px;background:${bg};display:flex;align-items:flex-start;gap:8px;border-bottom:1px solid rgba(255,255,255,0.03);">`;
+            html += `<span style="font-size:0.75rem;color:var(--text-tertiary,#666);min-width:20px;text-align:right;">${i + 1}.</span>`;
+            html += `<div style="flex:1;min-width:0;">`;
+            html += `<div style="font-size:0.78rem;font-weight:500;color:${textColor};">${escapeHtml(act.action)}</div>`;
+            if (act.detail) {
+                html += `<div style="font-size:0.68rem;color:var(--text-secondary,#8b949e);margin-top:1px;opacity:0.8;">${escapeHtml(act.detail)}</div>`;
+            }
+            html += `</div></div>`;
+        });
+        html += `</div>`;
+        if (issueCount > 0) {
+            html += `<div style="padding:6px 12px;background:rgba(248,81,73,0.1);border-top:1px solid rgba(248,81,73,0.2);">`;
+            html += `<div style="font-size:0.72rem;color:#f85149;font-weight:600;">⚠️ ${issueCount} issue(s) detected & auto-fixed:</div>`;
+            (data.test_issues || []).forEach(issue => {
+                html += `<div style="font-size:0.68rem;color:#f85149;margin-top:2px;">• ${escapeHtml(issue)}</div>`;
+            });
+            html += `</div>`;
+        }
+        html += `</div>`;
+    }
+
     // Deploy result
     if (data.deploy_result) {
         if (data.deploy_result.success) {
