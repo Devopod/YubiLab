@@ -1625,7 +1625,7 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
     test_actions = []  # List of test actions for UI display
     test_issues = []   # Issues found during testing
 
-    if final_test_passed and run_command and all_files and project.get('language') == 'python':
+    if final_test_passed and run_command and all_files and project['language'] == 'python':
         step_start = time.time()
         smoke_port = 3099
         smoke_proc = None
