@@ -15,6 +15,8 @@ function apiFetch(url, options = {}) {
                 xhr.setRequestHeader(key, value);
             }
         }
+        // Always skip ngrok browser warning (free tier shows HTML interstitial)
+        xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
 
         xhr.onload = function () {
             const response = {
@@ -39,8 +41,11 @@ function apiFetch(url, options = {}) {
                             errorMsg = 'Server is temporarily unavailable. Please try again in a moment.';
                         } else if (xhr.status === 401) {
                             errorMsg = 'Session expired. Please log in again.';
-                        } else if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('ngrok')) {
-                            errorMsg = 'Backend server is not responding properly. It may be restarting.';
+                        } else if (text.includes('ngrok') && (text.includes('<!DOCTYPE') || text.includes('<html'))) {
+                            // Ngrok interstitial page — retry silently
+                            errorMsg = 'Connecting to server... Please try again.';
+                        } else if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+                            errorMsg = 'Backend server returned unexpected HTML. It may be restarting.';
                         } else if (text.length === 0) {
                             errorMsg = 'Server returned an empty response.';
                         }
@@ -68,8 +73,13 @@ function apiFetch(url, options = {}) {
 let _connectionOk = true;
 async function checkBackendHealth() {
     try {
-        const res = await apiFetch('/api/health', { timeout: 5000 });
-        _connectionOk = res.ok;
+        const res = await apiFetch('/api/health', { timeout: 8000 });
+        if (res.ok) {
+            const data = await res.json();
+            _connectionOk = data && data.status === 'ok';
+        } else {
+            _connectionOk = false;
+        }
     } catch (e) {
         _connectionOk = false;
     }
