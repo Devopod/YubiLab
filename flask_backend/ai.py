@@ -247,10 +247,15 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Use `app.app_context()` pattern for initialization, NOT before_first_request
 - For database initialization: call `db.create_all()` inside create_app() AFTER registering blueprints so models are imported
 - In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year or inject it via context processor.
+- In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this prevents ALL template tags from working (url_for, csrf_token, extends, block, etc.)
+- For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — NEVER use bare {{ csrf_token() }} without the hidden input wrapper
+- For the index route (/): ALWAYS redirect to login page if user is not authenticated, redirect to main app page if authenticated. NEVER just render base.html as the index.
+- Do NOT create a separate main.py with a simple hello-world app. Use run.py with create_app() factory pattern.
 - Use proper HTML meta tags, responsive design, and accessibility
 - Add loading states, error states, and empty states in UIs
 - Use semantic HTML and modern CSS (flexbox, grid, variables)
 - For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without version pins to avoid conflicts with the system Python packages
+- For SQLAlchemy config: do NOT add excessive PRAGMA statements in SQLALCHEMY_ENGINE_OPTIONS — keep it minimal or empty
 
 ### Port Configuration
 - NEVER use port 5000 (YubiLab backend uses it)
@@ -327,7 +332,11 @@ RULES:
 - Port rules: NEVER use 5000 or 3001. Use PORT env var, default 3002.
 - For Flask: os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))
 - Always include `import os` in run.py when using os.environ
-- In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year instead."""
+- In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year instead.
+- In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this prevents ALL template tags from working
+- For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — never bare {{ csrf_token() }}
+- The index route (/) should redirect to login if not authenticated, not just render base.html
+- Do NOT create a separate main.py stub — use run.py with create_app() factory"""
 
 
 # Batch generation prompt for multi-request agent
@@ -360,6 +369,10 @@ RULES:
 - Flask 3.x compatibility: NEVER use @app.before_first_request (removed). Use `with app.app_context(): db.create_all()` in create_app() AFTER registering blueprints.
 - NEVER import Markup from flask — use `from markupsafe import Markup`
 - In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist in Jinja2. Use a hardcoded year instead.
+- In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this makes ALL Jinja2 tags render as literal text
+- For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — never bare {{ csrf_token() }}
+- The index route (/) should redirect to login if not authenticated
+- Do NOT create a separate main.py hello-world stub — use run.py with create_app() factory
 - For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without == to avoid conflicts"""
 
 
@@ -492,14 +505,43 @@ def sanitize_jinja_templates(content, file_path):
     """Fix common Jinja2 template issues in AI-generated HTML."""
     if not file_path.endswith('.html'):
         return content
-    # Fix {{ now().year }} — not a built-in Jinja2 function
-    # Replace with a static year or datetime.now import pattern
+
+    # === FIX 1: Remove {% raw %} / {% endraw %} wrapping ===
+    # AI sometimes wraps entire templates in {% raw %}...{% endraw %} which
+    # prevents ALL Jinja2 tags from being processed (url_for, csrf, extends, etc.)
+    content = re.sub(r'\{%\s*raw\s*%\}\s*', '', content)
+    content = re.sub(r'\s*\{%\s*endraw\s*%\}', '', content)
+
+    # === FIX 2: Fix {{ now().year }} — not a built-in Jinja2 function ===
     import datetime
     current_year = str(datetime.datetime.now().year)
     content = re.sub(r'\{\{\s*now\(\)\.year\s*\}\}', current_year, content)
     content = re.sub(r'\{\{\s*now\(\)\s*\}\}', current_year, content)
-    # Fix {{ current_year }} if not provided by context — replace with static year
-    # (Only if it looks like a standalone usage, not inside a block)
+
+    # === FIX 3: Fix bare {{ csrf_token() }} — must be inside a hidden input ===
+    # Replace bare {{ csrf_token() }} with proper hidden input field
+    # But don't double-wrap if it's already inside an input tag
+    def fix_csrf_token(match):
+        # Check if already inside an input tag by looking at surrounding context
+        start = max(0, match.start() - 200)
+        before = content[start:match.start()]
+        if 'name="csrf_token"' in before or 'name=\'csrf_token\'' in before:
+            return match.group(0)  # Already properly wrapped
+        return '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>'
+    # Match bare {{ csrf_token() }} that's on its own line or between tags
+    content = re.sub(
+        r'^\s*\{\{\s*csrf_token\(\)\s*\}\}\s*$',
+        '                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>',
+        content,
+        flags=re.MULTILINE
+    )
+    # Also handle inline bare csrf_token() not in an input
+    content = re.sub(
+        r'(?<!value=")\{\{\s*csrf_token\(\)\s*\}\}(?!")',
+        '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>',
+        content
+    )
+
     return content
 
 
@@ -507,6 +549,16 @@ def sanitize_flask_code(content, file_path):
     """Fix deprecated Flask 3.x patterns in generated Python code."""
     if not file_path.endswith('.py'):
         return content
+
+    # === FIX: Remove excessive PRAGMA statements from SQLAlchemy config ===
+    # AI sometimes generates config with dozens of repeated PRAGMA statements
+    if 'PRAGMA' in content:
+        pragma_count = content.count('PRAGMA')
+        if pragma_count > 8:
+            # Strip all lines containing PRAGMA
+            lines = content.splitlines(True)
+            cleaned_lines = [l for l in lines if 'PRAGMA' not in l]
+            content = ''.join(cleaned_lines)
     # Replace @app.before_first_request with app_context pattern
     if 'before_first_request' in content:
         # Remove the decorator line
@@ -549,6 +601,27 @@ def sanitize_flask_code(content, file_path):
     )
     # Fix _request_ctx_stack import
     content = content.replace('from flask import _request_ctx_stack', '# _request_ctx_stack removed in Flask 2.3+')
+
+    # === FIX: Index route should redirect to login, not render base.html ===
+    # When AI generates a routes.py with index that just renders base.html,
+    # replace it with a redirect to login page
+    if 'def index' in content and re.search(r"render_template\(['\"]base\.html['\"]\)", content):
+        content = re.sub(
+            r"return\s+render_template\(['\"]base\.html['\"]\)",
+            "from flask_login import current_user\n"
+            "    if current_user.is_authenticated:\n"
+            "        return redirect(url_for('chatbot.chat'))\n"
+            "    return redirect(url_for('auth.login'))",
+            content
+        )
+        # Add redirect import if not present
+        if 'redirect' not in content:
+            content = re.sub(
+                r'from flask import Blueprint,\s*render_template',
+                'from flask import Blueprint, render_template, redirect, url_for',
+                content
+            )
+
     # Fix db.create_all() before models are imported — ensure models import comes before create_all
     if 'def create_app' in content and 'db.create_all()' in content:
         # Check if db.create_all() appears before any blueprint/route registration
@@ -630,8 +703,25 @@ def generate_fallback_files(project_path, language='python'):
                 f.write('\n'.join(sorted(pip_packages)) + '\n')
             generated.append({'path': 'requirements.txt', 'action': 'create'})
 
-    # --- run.py ---
+    # --- Fix main.py / run.py conflict ---
+    # If both main.py and run.py exist, and main.py is a simple hello-world stub
+    # while run.py uses create_app factory, remove the conflicting main.py
+    main_py_path = os.path.join(project_path, 'main.py')
     run_path = os.path.join(project_path, 'run.py')
+    if os.path.isfile(main_py_path) and os.path.isfile(run_path):
+        try:
+            with open(main_py_path, 'r') as f:
+                main_content = f.read()
+            with open(run_path, 'r') as f:
+                run_content_check = f.read()
+            # If main.py is a simple stub and run.py uses create_app, remove main.py
+            if 'create_app' in run_content_check and ('Hello World' in main_content or 'hello' in main_content.lower()) and 'create_app' not in main_content:
+                os.remove(main_py_path)
+                generated.append({'path': 'main.py', 'action': 'deleted (conflicting stub)'})
+        except Exception:
+            pass
+
+    # --- run.py ---
     if not os.path.isfile(run_path):
         # Detect app structure to generate appropriate run.py
         has_create_app = False
@@ -657,8 +747,7 @@ if __name__ == '__main__':
 """
         else:
             # Check for main.py with app object
-            main_py = os.path.join(project_path, 'main.py')
-            if os.path.isfile(main_py):
+            if os.path.isfile(main_py_path):
                 run_content = None  # main.py already exists, don't overwrite
             else:
                 run_content = """import os
