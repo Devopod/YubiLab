@@ -57,6 +57,8 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
                 last_error = "YubiAI API rate limit exceeded."
             elif resp.status_code == 404:
                 last_error = "YubiAI API endpoint not found (404)."
+            elif resp.status_code == 503:
+                last_error = "YubiAI server is temporarily unavailable (503). It may be restarting — please wait a moment and try again."
             else:
                 last_error = f"YubiAI API returned HTTP {resp.status_code}."
         except requests.exceptions.ConnectionError:
@@ -872,6 +874,54 @@ document.addEventListener('DOMContentLoaded', function() {
     return generated
 
 
+def sanitize_project_on_disk(project_path):
+    """Post-build pass: scan ALL files in a project directory and apply sanitization.
+    This catches issues that slip through apply_file_changes (e.g. files from previous builds,
+    files written by fallback generation, or files the AI edited without going through our pipeline)."""
+    fixed_files = []
+
+    for root, dirs, files in os.walk(project_path):
+        # Skip hidden dirs, __pycache__, node_modules, venv
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', 'node_modules', 'venv', '.venv')]
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            rel_path = os.path.relpath(filepath, project_path)
+            try:
+                with open(filepath, 'r', errors='ignore') as f:
+                    content = f.read()
+                original = content
+
+                # Apply sanitization based on file type
+                if filename.endswith('.html'):
+                    content = sanitize_jinja_templates(content, filename)
+                elif filename.endswith('.py'):
+                    content = sanitize_flask_code(content, filename)
+
+                if content != original:
+                    with open(filepath, 'w') as f:
+                        f.write(content)
+                    fixed_files.append(rel_path)
+            except Exception:
+                pass
+
+    # Remove conflicting main.py stub if run.py exists with create_app
+    main_py = os.path.join(project_path, 'main.py')
+    run_py = os.path.join(project_path, 'run.py')
+    if os.path.isfile(main_py) and os.path.isfile(run_py):
+        try:
+            with open(main_py, 'r') as f:
+                main_content = f.read()
+            with open(run_py, 'r') as f:
+                run_content = f.read()
+            if 'create_app' in run_content and ('Hello World' in main_content or 'hello' in main_content.lower()) and 'create_app' not in main_content:
+                os.remove(main_py)
+                fixed_files.append('main.py (deleted conflicting stub)')
+        except Exception:
+            pass
+
+    return fixed_files
+
+
 def apply_file_changes(project_path, files_list):
     """Apply file changes from agent response to disk."""
     created_files = []
@@ -1202,6 +1252,17 @@ User request: {prompt}"""
                 test_cmd = 'python -m py_compile run.py'
             elif os.path.isfile(os.path.join(project_path, 'main.py')):
                 test_cmd = 'python -m py_compile main.py'
+
+    # === POST-BUILD SANITIZATION PASS ===
+    # Scan ALL files on disk and fix common AI-generated issues
+    # ({% raw %}, bare csrf_token, PRAGMA spam, index route, main.py conflict)
+    if all_files:
+        step_start = time.time()
+        sanitized = sanitize_project_on_disk(project_path)
+        if sanitized:
+            add_step('Sanitizing generated code', 'done',
+                     f'Fixed {len(sanitized)} files: {", ".join(sanitized[:5])}',
+                     time.time() - step_start)
 
     # === INSTALL DEPENDENCIES ===
     install_result = None
