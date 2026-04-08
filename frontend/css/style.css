@@ -1691,3 +1691,55 @@ select:focus-visible {
 .deploy-action-btn.btn-stop { background: linear-gradient(135deg, var(--accent-orange), var(--accent-yellow)); }
 .deploy-action-btn.btn-redeploy { background: linear-gradient(135deg, var(--accent-green), #2ea44f); }
 .deploy-action-btn.btn-delete { background: linear-gradient(135deg, var(--accent-red), #e04040); }
+
+/* ============================================
+   Developer Tools — Bottom Panel Styles
+   ============================================ */
+#database-panel, #search-panel {
+    font-family: var(--font-sans);
+}
+#database-panel .sql-table,
+#search-panel .search-result,
+#database-panel .tool-input,
+#search-panel .tool-input,
+#database-panel .tool-btn,
+#search-panel .tool-btn {
+    font-family: var(--font-sans);
+}
+#database-panel .sql-table {
+    width: 100%; border-collapse: collapse; font-size: 0.72rem;
+}
+#database-panel .sql-table th {
+    background: var(--bg-tertiary); padding: 4px 8px; text-align: left;
+    border: 1px solid var(--border-color); color: var(--text-primary); font-weight: 600;
+}
+#database-panel .sql-table td {
+    padding: 4px 8px; border: 1px solid var(--border-color); color: var(--text-primary);
+}
+#database-panel .sql-table tr:hover { background: rgba(240,136,62,0.05); }
+#search-panel .search-result {
+    padding: 6px 8px; border-bottom: 1px solid var(--border-color); cursor: pointer;
+}
+#search-panel .search-result:hover { background: var(--bg-tertiary); }
+#search-panel .search-file { color: var(--accent-blue); font-size: 0.72rem; }
+#search-panel .search-line { color: var(--accent-orange); font-size: 0.7rem; }
+#search-panel .search-content {
+    color: var(--text-primary); font-family: var(--font-mono); font-size: 0.72rem;
+}
+.tool-input {
+    padding: 5px 8px; font-size: 0.78rem; border-radius: var(--radius-sm);
+    background: var(--bg-primary); border: 1px solid var(--border-color);
+    color: var(--text-primary); outline: none;
+}
+.tool-input:focus { border-color: var(--accent-orange); }
+.tool-btn {
+    padding: 4px 10px; font-size: 0.72rem; border-radius: var(--radius-sm); cursor: pointer;
+    background: linear-gradient(135deg, var(--accent-orange), var(--accent-yellow)); border: none;
+    color: #fff; font-weight: 600; transition: var(--transition-fast);
+}
+.tool-btn:hover { opacity: 0.85; }
+.tool-btn.secondary {
+    background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary);
+}
+.tool-btn.secondary:hover { background: var(--bg-hover); }
+.tool-btn.danger { background: linear-gradient(135deg, var(--accent-red), #da3633); }

@@ -12,6 +12,7 @@ from files import files_bp
 from ai import ai_bp
 from keys import keys_bp
 from deploy import deploy_bp
+from tools import tools_bp
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 app.secret_key = SECRET_KEY
@@ -30,6 +31,7 @@ app.register_blueprint(files_bp)
 app.register_blueprint(ai_bp)
 app.register_blueprint(keys_bp)
 app.register_blueprint(deploy_bp)
+app.register_blueprint(tools_bp)
 
 # Initialize database
 init_db()

@@ -9,6 +9,7 @@ const NODE_ENGINE_URL = (window.location.port === '5000') ? window.location.prot
 
 // State
 let projectId = null;
+let currentProjectId = null; // alias for tools.js
 let projectData = null;
 let monacoEditor = null;
 let openTabs = [];        // [{path, name, content, modified}]
@@ -56,6 +57,7 @@ const FILE_ICONS = {
     // Get project ID from URL
     const params = new URLSearchParams(window.location.search);
     projectId = parseInt(params.get('project'));
+    currentProjectId = projectId;
     if (!projectId) { window.location.href = '/'; return; }
 
     // Load project
@@ -827,10 +829,11 @@ function togglePreview() {
 
 function switchBottomTab(panel) {
     document.querySelectorAll('.bottom-tab').forEach(t => t.classList.remove('active'));
-    document.querySelector(`.bottom-tab[data-panel="${panel}"]`).classList.add('active');
+    document.querySelector(`.bottom-tab[data-panel="${panel}"]`)?.classList.add('active');
 
     document.querySelectorAll('.panel-pane').forEach(p => p.classList.remove('active'));
-    document.getElementById(`${panel}-pane`).classList.add('active');
+    const pane = document.getElementById(`${panel}-pane`);
+    if (pane) pane.classList.add('active');
 
     if (panel === 'terminal' && fitAddon) {
         setTimeout(() => fitAddon.fit(), 50);
@@ -840,6 +843,20 @@ function switchBottomTab(panel) {
     }
     if (panel === 'deployments') {
         loadDeployments();
+    }
+    if (panel === 'database' && typeof initDatabasePanel === 'function') {
+        const dbPane = document.getElementById('database-panel');
+        if (dbPane && !dbPane.dataset.initialized) {
+            dbPane.dataset.initialized = 'true';
+            initDatabasePanel();
+        }
+    }
+    if (panel === 'search' && typeof initSearchPanel === 'function') {
+        const searchPane = document.getElementById('search-panel');
+        if (searchPane && !searchPane.dataset.initialized) {
+            searchPane.dataset.initialized = 'true';
+            initSearchPanel();
+        }
     }
 }
 

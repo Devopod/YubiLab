@@ -69,6 +69,22 @@ function apiFetch(url, options = {}) {
     });
 }
 
+// High-level API request helper (used by tools.js)
+// Returns parsed JSON directly, throws on error
+async function apiRequest(url, method = 'GET', body = null) {
+    const options = { method };
+    if (body && method !== 'GET') {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(body);
+    }
+    const res = await apiFetch(url, options);
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
+}
+
 // Connection status checker
 let _connectionOk = true;
 async function checkBackendHealth() {
