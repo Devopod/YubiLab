@@ -17,8 +17,10 @@ def get_project_path(user_id, project_name):
     return os.path.join(WORKSPACES_DIR, str(user_id), safe_name)
 
 
-def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=3):
-    """Call YubiAI API with automatic retry and exponential backoff."""
+def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=5):
+    """Call YubiAI API with automatic retry and longer backoff for Render cold starts.
+    Render free tier sleeps after inactivity and takes 30-60s to wake up.
+    Retry schedule: 5s, 10s, 15s, 20s (total ~50s wait covers cold start)."""
     if not YUBIAI_API_KEY:
         return {"error": "YubiAI API key not configured. Set YUBIAI_API_KEY environment variable."}
     if not YUBIAI_API_URL:
@@ -58,19 +60,20 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
             elif resp.status_code == 404:
                 last_error = "YubiAI API endpoint not found (404)."
             elif resp.status_code == 503:
-                last_error = "YubiAI server is temporarily unavailable (503). It may be restarting — please wait a moment and try again."
+                last_error = "YubiAI server is waking up (503). Free-tier servers sleep after inactivity — retrying..."
             else:
                 last_error = f"YubiAI API returned HTTP {resp.status_code}."
         except requests.exceptions.ConnectionError:
-            last_error = "Cannot connect to YubiAI API. The server appears to be offline."
+            last_error = "Cannot connect to YubiAI API. The server may be waking up — retrying..."
         except requests.exceptions.Timeout:
             last_error = "YubiAI API request timed out (180s)."
         except Exception as e:
             last_error = f"YubiAI API error: {str(e)}"
 
-        # Exponential backoff: 2s, 4s, 8s
+        # Linear backoff: 5s, 10s, 15s, 20s — enough for Render cold start (~30-60s)
         if attempt < retries - 1:
-            time.sleep(2 ** (attempt + 1))
+            wait_secs = 5 * (attempt + 1)
+            time.sleep(wait_secs)
 
     return {"error": f"{last_error} (failed after {retries} retries)"}
 
