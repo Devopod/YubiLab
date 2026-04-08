@@ -50,7 +50,7 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
                 return resp.json()
             error_text = resp.text
             if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
-                last_error = "YubiAI API endpoint is offline. The ngrok tunnel may have disconnected."
+                last_error = "YubiAI API endpoint is offline or unreachable."
             elif resp.status_code == 401:
                 return {"error": "YubiAI API authentication failed. Check your API key."}
             elif resp.status_code == 429:

@@ -9,7 +9,7 @@ NODE_ENGINE_URL = os.environ.get('NODE_ENGINE_URL', 'http://localhost:3001')
 
 YUBIAI_API_URL = os.environ.get(
     'YUBIAI_API_URL',
-    'https://deena-handwoven-prefixally.ngrok-free.dev/api/v1/chat'
+    'https://yubiai.onrender.com/api/v1/chat'
 )
 YUBIAI_API_KEY = os.environ.get('YUBIAI_API_KEY', '')
 

@@ -1071,7 +1071,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'infinite-learner-secret-key')
 
 # YubiAI API Configuration
-API_URL = os.environ.get('YUBIAI_API_URL', 'https://deena-handwoven-prefixally.ngrok-free.dev/api/v1/chat')
+API_URL = os.environ.get('YUBIAI_API_URL', 'https://yubiai.onrender.com/api/v1/chat')
 API_KEY = os.environ.get('YUBIAI_API_KEY', '')
 
 SYSTEM_PROMPT = """You are Infinite Learner AI, an intelligent, friendly, and knowledgeable AI chatbot developed by Dewan Sakibul Islam at Dhaka, Bangladesh. You are powered by GPT-OSS 120B.
