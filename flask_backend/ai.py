@@ -17,10 +17,10 @@ def get_project_path(user_id, project_name):
     return os.path.join(WORKSPACES_DIR, str(user_id), safe_name)
 
 
-def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=5):
-    """Call YubiAI API with automatic retry and longer backoff for Render cold starts.
-    Render free tier sleeps after inactivity and takes 30-60s to wake up.
-    Retry schedule: 5s, 10s, 15s, 20s (total ~50s wait covers cold start)."""
+def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=8):
+    """Call YubiAI API with automatic retry and aggressive backoff for Render cold starts.
+    Render free tier sleeps after inactivity and takes 30-90s to wake up.
+    Retry schedule: 5s, 8s, 12s, 15s, 20s, 25s, 30s (total ~115s covers even slow cold starts)."""
     if not YUBIAI_API_KEY:
         return {"error": "YubiAI API key not configured. Set YUBIAI_API_KEY environment variable."}
     if not YUBIAI_API_URL:
@@ -61,6 +61,8 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
                 last_error = "YubiAI API endpoint not found (404)."
             elif resp.status_code == 503:
                 last_error = "YubiAI server is waking up (503). Free-tier servers sleep after inactivity — retrying..."
+            elif resp.status_code == 502:
+                last_error = "YubiAI server returned 502 Bad Gateway — retrying..."
             else:
                 last_error = f"YubiAI API returned HTTP {resp.status_code}."
         except requests.exceptions.ConnectionError:
@@ -70,9 +72,10 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
         except Exception as e:
             last_error = f"YubiAI API error: {str(e)}"
 
-        # Linear backoff: 5s, 10s, 15s, 20s — enough for Render cold start (~30-60s)
+        # Aggressive backoff: 5, 8, 12, 15, 20, 25, 30s — covers Render cold starts up to ~90s
         if attempt < retries - 1:
-            wait_secs = 5 * (attempt + 1)
+            backoff_schedule = [5, 8, 12, 15, 20, 25, 30]
+            wait_secs = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
             time.sleep(wait_secs)
 
     return {"error": f"{last_error} (failed after {retries} retries)"}
@@ -504,7 +507,7 @@ def ai_generate(user):
 
 
 def parse_agent_json(response_text):
-    """Parse JSON from AI response, handling markdown wrapping."""
+    """Parse JSON from AI response, handling markdown wrapping, truncated JSON, and extra data."""
     # Strip markdown code blocks if present
     text = response_text.strip()
     if text.startswith('```'):
@@ -516,9 +519,70 @@ def parse_agent_json(response_text):
 
     # Find JSON object
     json_start = text.find('{')
+    if json_start < 0:
+        return None
+
+    # Try parsing from the start of JSON to the end
     json_end = text.rfind('}') + 1
-    if json_start >= 0 and json_end > json_start:
-        return json.loads(text[json_start:json_end])
+    if json_end > json_start:
+        try:
+            return json.loads(text[json_start:json_end])
+        except json.JSONDecodeError:
+            pass
+
+    # Try to find matching braces (handles extra data after JSON)
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(json_start, len(text)):
+        c = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if c == '\\':
+            escape_next = True
+            continue
+        if c == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[json_start:i + 1])
+                except json.JSONDecodeError:
+                    pass
+                break
+
+    # Last resort: try to fix truncated JSON by closing open braces/brackets
+    candidate = text[json_start:json_end] if json_end > json_start else text[json_start:]
+    for fix_attempt in range(5):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as e:
+            err_msg = str(e).lower()
+            if 'expecting' in err_msg and (',' in err_msg or 'delimiter' in err_msg):
+                # Try removing the problematic trailing content
+                last_good = candidate.rfind(',', 0, e.pos)
+                if last_good > 0:
+                    candidate = candidate[:last_good] + candidate[last_good:].split(']')[0] + ']}'
+                else:
+                    break
+            elif 'unterminated' in err_msg or 'expecting value' in err_msg:
+                # Try closing unclosed structures
+                candidate = candidate.rstrip()
+                if candidate.endswith(','):
+                    candidate = candidate[:-1]
+                open_braces = candidate.count('{') - candidate.count('}')
+                open_brackets = candidate.count('[') - candidate.count(']')
+                candidate += ']' * max(0, open_brackets) + '}' * max(0, open_braces)
+            else:
+                break
+
     return None
 
 
