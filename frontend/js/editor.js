@@ -1152,6 +1152,26 @@ function renderAgentResult(data) {
         html += `</div>`;
     }
 
+    // Devin-like Agent Activity Log (live_log)
+    if (data.live_log && data.live_log.length > 0) {
+        html += `<div style="margin-top:10px;border:1px solid var(--border-color, #30363d);border-radius:8px;overflow:hidden;">`;
+        html += `<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('.toggle-arrow').textContent=this.nextElementSibling.style.display==='none'?'\u25B6':'\u25BC'" style="background:linear-gradient(135deg,#0d1117,#161b22);padding:8px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">`;
+        html += `<strong style="font-size:0.82rem;color:#58a6ff;">\u{1F4AC} Agent Activity Log</strong>`;
+        html += `<span style="font-size:0.7rem;color:var(--text-secondary);font-weight:600;"><span class="toggle-arrow">\u25BC</span> ${data.live_log.length} events</span>`;
+        html += `</div>`;
+        html += `<div class="agent-live-log" style="max-height:350px;overflow-y:auto;padding:4px 0;">`;
+        data.live_log.forEach((entry, i) => {
+            const typeColors = { info: '#58a6ff', plan: '#d2a8ff', generate: '#79c0ff', write: '#7ee787', fix: '#ffa657', success: '#3fb950', error: '#f85149', warn: '#d29922', test: '#bc8cff', install: '#58a6ff', deploy: '#f778ba', complete: '#3fb950' };
+            const color = typeColors[entry.type] || '#8b949e';
+            const bg = entry.type === 'success' ? 'rgba(63,185,80,0.06)' : entry.type === 'error' ? 'rgba(248,81,73,0.06)' : entry.type === 'warn' ? 'rgba(210,153,34,0.06)' : 'transparent';
+            html += `<div class="log-entry" style="padding:3px 12px;background:${bg};display:flex;align-items:flex-start;gap:8px;border-bottom:1px solid rgba(255,255,255,0.02);animation:fadeInLog 0.3s ease ${i * 0.05}s both;">`;
+            html += `<span style="font-size:0.78rem;min-width:18px;">${entry.icon || '\u25CF'}</span>`;
+            html += `<span style="font-size:0.75rem;color:${color};line-height:1.4;">${escapeHtml(entry.message)}</span>`;
+            html += `</div>`;
+        });
+        html += `</div></div>`;
+    }
+
     // Deploy result
     if (data.deploy_result) {
         if (data.deploy_result.success) {
@@ -1311,6 +1331,10 @@ function addAgentProgress() {
             <div class="agent-step" data-step="7"><span class="step-icon">🚀</span> Auto-deploying...</div>
             <div class="agent-step" data-step="8"><span class="step-icon">✅</span> Complete!</div>
         </div>
+        <div class="agent-live-feed" style="margin-top:8px;border-top:1px solid var(--border-color,#30363d);padding-top:6px;">
+            <div style="font-size:0.7rem;color:#58a6ff;font-weight:600;margin-bottom:4px;">💬 Live Activity</div>
+            <div class="live-feed-messages" style="max-height:120px;overflow-y:auto;font-size:0.72rem;"></div>
+        </div>
         <div class="agent-timer" style="font-size:0.7rem;color:var(--text-secondary);margin-top:6px;">Elapsed: 0s</div>
     `;
     messagesDiv.appendChild(el);
@@ -1322,7 +1346,26 @@ function animateAgentProgress(el) {
     if (!el) return;
     const startTime = Date.now();
     let currentStep = 1;
+    let liveMsgIndex = 0;
     const stepTimings = [0, 3000, 12000, 25000, 40000, 55000, 70000, 85000];
+
+    // Devin-like live activity messages shown during build
+    const liveMessages = [
+        { t: 1000, icon: '🔍', msg: 'Now analyzing project structure and requirements...' },
+        { t: 3500, icon: '🧠', msg: 'Now planning project architecture — identifying files and dependencies...' },
+        { t: 6000, icon: '📋', msg: 'Now organizing files into build groups for optimal generation...' },
+        { t: 10000, icon: '⚡', msg: 'Now generating Project Core files (settings, urls, config)...' },
+        { t: 18000, icon: '📝', msg: 'Now creating application models and database schema...' },
+        { t: 26000, icon: '📝', msg: 'Now generating views, forms, and URL routing...' },
+        { t: 34000, icon: '🎨', msg: 'Now creating HTML templates with responsive design...' },
+        { t: 42000, icon: '🎨', msg: 'Now generating static assets (CSS, JavaScript)...' },
+        { t: 50000, icon: '📦', msg: 'Now installing project dependencies...' },
+        { t: 58000, icon: '🧪', msg: 'Now testing project — running validation checks...' },
+        { t: 65000, icon: '🔧', msg: 'Now checking for issues and applying auto-fixes...' },
+        { t: 72000, icon: '🗄️', msg: 'Now setting up database and running migrations...' },
+        { t: 78000, icon: '🚀', msg: 'Now deploying application...' },
+        { t: 85000, icon: '✅', msg: 'Finalizing build — almost done!' },
+    ];
 
     // Update mode badge after 4 seconds
     setTimeout(() => {
@@ -1342,6 +1385,20 @@ function animateAgentProgress(el) {
             }
         }
         updateAgentStep(el, currentStep);
+
+        // Show live activity messages based on elapsed time
+        const feedEl = el.querySelector('.live-feed-messages');
+        if (feedEl) {
+            while (liveMsgIndex < liveMessages.length && elapsed >= liveMessages[liveMsgIndex].t) {
+                const m = liveMessages[liveMsgIndex];
+                const msgDiv = document.createElement('div');
+                msgDiv.style.cssText = 'padding:2px 0;color:#58a6ff;opacity:0;animation:fadeInLog 0.4s ease forwards;';
+                msgDiv.innerHTML = `<span style="margin-right:4px;">${m.icon}</span>${m.msg}`;
+                feedEl.appendChild(msgDiv);
+                feedEl.scrollTop = feedEl.scrollHeight;
+                liveMsgIndex++;
+            }
+        }
 
         // Update timer
         const timerEl = el.querySelector('.agent-timer');

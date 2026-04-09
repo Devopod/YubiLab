@@ -1178,6 +1178,127 @@ document.getElementById('chat-form').addEventListener('submit', function(e) {
 """)
             generated.append({'path': 'app/templates/chatbot.html', 'action': 'create'})
 
+    # === DJANGO PROJECT FALLBACK ===
+    # Detect Django projects and generate missing critical files
+    is_django = False
+    if os.path.isfile(req_path):
+        try:
+            with open(req_path, 'r') as f:
+                if 'django' in f.read().lower():
+                    is_django = True
+        except Exception:
+            pass
+    if not is_django:
+        for root, _, files in os.walk(project_path):
+            for fname in files:
+                if fname.endswith('.py'):
+                    try:
+                        with open(os.path.join(root, fname), 'r') as f:
+                            content = f.read()
+                        if 'django' in content.lower() and ('import django' in content.lower() or 'from django' in content.lower()):
+                            is_django = True
+                            break
+                    except Exception:
+                        pass
+            if is_django:
+                break
+
+    if is_django:
+        # Determine project config directory name
+        config_dir = None
+        manage_path = os.path.join(project_path, 'manage.py')
+        if os.path.isfile(manage_path):
+            try:
+                with open(manage_path, 'r') as f:
+                    manage_content = f.read()
+                match = re.search(r"['\"]([\w]+)\.settings['\"]", manage_content)
+                if match:
+                    config_dir = match.group(1)
+            except Exception:
+                pass
+        if not config_dir:
+            for d in os.listdir(project_path):
+                dp = os.path.join(project_path, d)
+                if os.path.isdir(dp) and not d.startswith('.') and d not in ('static', 'templates', 'media', 'venv', '__pycache__', 'logs', 'node_modules'):
+                    if os.path.isfile(os.path.join(dp, 'settings.py')) or os.path.isfile(os.path.join(dp, 'wsgi.py')):
+                        config_dir = d
+                        break
+        if not config_dir:
+            config_dir = 'main'
+
+        config_path = os.path.join(project_path, config_dir)
+        os.makedirs(config_path, exist_ok=True)
+
+        # Detect installed Django apps from existing directories
+        installed_apps = []
+        for d in sorted(os.listdir(project_path)):
+            dp = os.path.join(project_path, d)
+            if os.path.isdir(dp) and not d.startswith('.') and d != config_dir and d not in ('static', 'templates', 'media', 'venv', '__pycache__', 'logs', 'node_modules', 'staticfiles'):
+                if os.path.isfile(os.path.join(dp, 'views.py')) or os.path.isfile(os.path.join(dp, 'models.py')):
+                    installed_apps.append(d)
+
+        # Generate manage.py if missing
+        if not os.path.isfile(manage_path):
+            manage_content = f'''#!/usr/bin/env python\n"""Django's command-line utility for administrative tasks."""\nimport os\nimport sys\n\n\ndef main():\n    """Run administrative tasks."""\n    os.environ.setdefault('DJANGO_SETTINGS_MODULE', '{config_dir}.settings')\n    try:\n        from django.core.management import execute_from_command_line\n    except ImportError as exc:\n        raise ImportError(\n            "Couldn't import Django. Are you sure it's installed and "\n            "available on your PYTHONPATH environment variable? Did you "\n            "forget to activate a virtual environment?"\n        ) from exc\n    execute_from_command_line(sys.argv)\n\n\nif __name__ == '__main__':\n    main()\n'''
+            with open(manage_path, 'w') as f:
+                f.write(manage_content)
+            generated.append({'path': 'manage.py', 'action': 'create'})
+
+        # Generate settings.py if missing
+        settings_path = os.path.join(config_path, 'settings.py')
+        if not os.path.isfile(settings_path):
+            apps_str = '\n'.join(f"    '{app}'," for app in installed_apps)
+            settings_content = f'''"""Django settings for {config_dir} project."""\nimport os\nfrom pathlib import Path\n\nBASE_DIR = Path(__file__).resolve().parent.parent\n\nSECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-production')\nDEBUG = True\nALLOWED_HOSTS = ['*']\n\nINSTALLED_APPS = [\n    'django.contrib.admin',\n    'django.contrib.auth',\n    'django.contrib.contenttypes',\n    'django.contrib.sessions',\n    'django.contrib.messages',\n    'django.contrib.staticfiles',\n{apps_str}\n]\n\nMIDDLEWARE = [\n    'django.middleware.security.SecurityMiddleware',\n    'django.contrib.sessions.middleware.SessionMiddleware',\n    'django.middleware.common.CommonMiddleware',\n    'django.middleware.csrf.CsrfViewMiddleware',\n    'django.contrib.auth.middleware.AuthenticationMiddleware',\n    'django.contrib.messages.middleware.MessageMiddleware',\n    'django.middleware.clickjacking.XFrameOptionsMiddleware',\n]\n\nROOT_URLCONF = '{config_dir}.urls'\n\nTEMPLATES = [\n    {{\n        'BACKEND': 'django.template.backends.django.DjangoTemplates',\n        'DIRS': [BASE_DIR / 'templates'],\n        'APP_DIRS': True,\n        'OPTIONS': {{\n            'context_processors': [\n                'django.template.context_processors.debug',\n                'django.template.context_processors.request',\n                'django.contrib.auth.context_processors.auth',\n                'django.contrib.messages.context_processors.messages',\n            ],\n        }},\n    }},\n]\n\nWSGI_APPLICATION = '{config_dir}.wsgi.application'\n\nDATABASES = {{\n    'default': {{\n        'ENGINE': 'django.db.backends.sqlite3',\n        'NAME': BASE_DIR / 'db.sqlite3',\n    }}\n}}\n\nAUTH_PASSWORD_VALIDATORS = [\n    {{'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'}},\n    {{'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'}},\n    {{'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'}},\n    {{'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'}},\n]\n\nLANGUAGE_CODE = 'en-us'\nTIME_ZONE = 'UTC'\nUSE_I18N = True\nUSE_TZ = True\n\nSTATIC_URL = 'static/'\nSTATICFILES_DIRS = [BASE_DIR / 'static']\nSTATIC_ROOT = BASE_DIR / 'staticfiles'\n\nDEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'\n\nLOGIN_URL = '/login/'\nLOGIN_REDIRECT_URL = '/'\nLOGOUT_REDIRECT_URL = '/login/'\n'''
+            with open(settings_path, 'w') as f:
+                f.write(settings_content)
+            generated.append({'path': f'{config_dir}/settings.py', 'action': 'create'})
+
+        # Generate urls.py if missing
+        urls_path = os.path.join(config_path, 'urls.py')
+        if not os.path.isfile(urls_path):
+            url_includes = ''
+            for app in installed_apps:
+                app_urls_file = os.path.join(project_path, app, 'urls.py')
+                if os.path.isfile(app_urls_file):
+                    prefix = '' if app in ('main', 'core') else f'{app}/'
+                    url_includes += f"    path('{prefix}', include('{app}.urls')),\n"
+            urls_content = f'''"""URL configuration for {config_dir} project."""\nfrom django.contrib import admin\nfrom django.urls import path, include\n\nurlpatterns = [\n    path('admin/', admin.site.urls),\n{url_includes}]\n'''
+            with open(urls_path, 'w') as f:
+                f.write(urls_content)
+            generated.append({'path': f'{config_dir}/urls.py', 'action': 'create'})
+
+        # Generate wsgi.py if missing
+        wsgi_path = os.path.join(config_path, 'wsgi.py')
+        if not os.path.isfile(wsgi_path):
+            wsgi_content = f'''"""WSGI config for {config_dir} project."""\nimport os\nfrom django.core.wsgi import get_wsgi_application\n\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', '{config_dir}.settings')\napplication = get_wsgi_application()\n'''
+            with open(wsgi_path, 'w') as f:
+                f.write(wsgi_content)
+            generated.append({'path': f'{config_dir}/wsgi.py', 'action': 'create'})
+
+        # Generate asgi.py if missing
+        asgi_path = os.path.join(config_path, 'asgi.py')
+        if not os.path.isfile(asgi_path):
+            asgi_content = f'''"""ASGI config for {config_dir} project."""\nimport os\nfrom django.core.asgi import get_asgi_application\n\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', '{config_dir}.settings')\napplication = get_asgi_application()\n'''
+            with open(asgi_path, 'w') as f:
+                f.write(asgi_content)
+            generated.append({'path': f'{config_dir}/asgi.py', 'action': 'create'})
+
+        # Generate __init__.py for config dir if missing
+        init_path = os.path.join(config_path, '__init__.py')
+        if not os.path.isfile(init_path):
+            with open(init_path, 'w') as f:
+                f.write('')
+            generated.append({'path': f'{config_dir}/__init__.py', 'action': 'create'})
+
+        # Generate __init__.py for app dirs if missing
+        for app in installed_apps:
+            app_init = os.path.join(project_path, app, '__init__.py')
+            if not os.path.isfile(app_init):
+                os.makedirs(os.path.join(project_path, app), exist_ok=True)
+                with open(app_init, 'w') as f:
+                    f.write('')
+                generated.append({'path': f'{app}/__init__.py', 'action': 'create'})
+
     return generated
 
 
@@ -1361,13 +1482,19 @@ def ai_agent(user):
     roadmap = []
     install_cmd = ''
     test_cmd = ''
+    live_log = []  # Devin-like activity log — detailed messages about what agent is doing
 
     def add_step(name, status, detail='', duration=0):
         steps.append({'name': name, 'status': status, 'detail': detail, 'duration': round(duration, 1)})
 
     # === STEP 1: Understand project ===
     step_start = time.time()
+    live_log.append({'icon': '\U0001f50d', 'message': f'Now analyzing project structure for "{project["name"]}"...', 'type': 'info'})
     files_context, file_list = get_project_files_context(project_path)
+    if file_list:
+        live_log.append({'icon': '\U0001f4c2', 'message': f'Found {len(file_list)} existing files in project directory', 'type': 'info'})
+    else:
+        live_log.append({'icon': '\U0001f4c2', 'message': 'Project is empty — starting fresh build', 'type': 'info'})
     add_step('Analyzing project', 'done',
              f'Found {len(file_list)} files' if file_list else 'Empty project',
              time.time() - step_start)
@@ -1378,6 +1505,7 @@ def ai_agent(user):
     if error_context:
         # ---- BUG FIX MODE (always single request) ----
         step_start = time.time()
+        live_log.append({'icon': '\U0001f41b', 'message': 'Now analyzing the error and planning a fix...', 'type': 'fix'})
         full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
@@ -1410,6 +1538,8 @@ IMPORTANT: Only modify files that need fixing. Do NOT regenerate files that are 
         run_command = agent_response.get('run_command', '')
         install_cmd = agent_response.get('install_command', '')
         test_cmd = agent_response.get('test_command', '')
+        fix_msg = agent_response.get('message', '')
+        live_log.append({'icon': '\U0001f4a1', 'message': f'Identified fix: {fix_msg[:120]}' if fix_msg else f'Now fixing {len(agent_response.get("files", []))} files...', 'type': 'fix'})
         add_step('Planning & generating fix', 'done',
                  f'{len(agent_response.get("files", []))} files to fix',
                  time.time() - step_start)
@@ -1417,6 +1547,8 @@ IMPORTANT: Only modify files that need fixing. Do NOT regenerate files that are 
         # Write fix files
         step_start = time.time()
         files_list = agent_response.get('files', [])
+        for fl in files_list:
+            live_log.append({'icon': '\u270d\ufe0f', 'message': f'Now writing fix to {fl.get("path", "unknown")}', 'type': 'write'})
         created_files, errors = apply_file_changes(project_path, files_list)
         all_files.extend(created_files)
         all_errors.extend(errors)
@@ -1428,6 +1560,7 @@ IMPORTANT: Only modify files that need fixing. Do NOT regenerate files that are 
         # ---- MULTI-REQUEST MODE (for big projects) ----
         # Phase 1: Plan only — get file groups
         step_start = time.time()
+        live_log.append({'icon': '\U0001f9e0', 'message': 'Now planning project architecture — analyzing requirements and dependencies...', 'type': 'plan'})
         plan_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
@@ -1458,6 +1591,9 @@ Plan this project. List ALL files needed, grouped into logical batches. Do NOT w
                     run_command = plan_response.get('run_command', '')
                     install_cmd = plan_response.get('install_command', '')
                     test_cmd = plan_response.get('test_command', '')
+                    live_log.append({'icon': '\U0001f4cb', 'message': f'Project plan ready: {total_files} files in {len(file_groups)} groups', 'type': 'plan'})
+                    for ri, r in enumerate(roadmap[:6]):
+                        live_log.append({'icon': '\U0001f4cc', 'message': f'Step {ri+1}: {r}', 'type': 'plan'})
                     add_step('Planning project', 'done',
                              f'{total_files} files in {len(file_groups)} groups, {len(roadmap)} steps',
                              time.time() - step_start)
@@ -1476,6 +1612,10 @@ Plan this project. List ALL files needed, grouped into logical batches. Do NOT w
 
                 if not group_files:
                     continue
+
+                live_log.append({'icon': '\u26a1', 'message': f'Now generating {group_name} — {group_desc}...', 'type': 'generate'})
+                for gf in group_files:
+                    live_log.append({'icon': '\U0001f4dd', 'message': f'Now creating {gf}...', 'type': 'write'})
 
                 # Build context of already-generated files for cross-file imports
                 existing_files_ctx = ''
@@ -1510,10 +1650,12 @@ Generate each file with full, production-ready code. Make sure imports reference
                         created, errs = apply_file_changes(project_path, batch_files)
                         all_files.extend(created)
                         all_errors.extend(errs)
+                        live_log.append({'icon': '\u2705', 'message': f'Successfully generated {len(created)} files for {group_name}', 'type': 'success'})
                         add_step(f'Generating {group_name}', 'done',
                                  f'{len(created)} files ({group_desc})',
                                  time.time() - step_start)
                     else:
+                        live_log.append({'icon': '\u26a0\ufe0f', 'message': f'{group_name}: API returned empty response — will auto-generate fallback files', 'type': 'warn'})
                         add_step(f'Generating {group_name}', 'failed', 'No files in response', time.time() - step_start)
                         all_errors.append(f'{group_name}: empty response')
                 except Exception as e:
@@ -1523,6 +1665,7 @@ Generate each file with full, production-ready code. Make sure imports reference
     # ---- SINGLE-REQUEST MODE (small projects or fallback) ----
     if not error_context and not (is_large and all_files):
         step_start = time.time()
+        live_log.append({'icon': '\U0001f680', 'message': 'Now generating complete project in single request...', 'type': 'generate'})
         full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
@@ -1568,24 +1711,36 @@ User request: {prompt}"""
     # === FALLBACK FILE GENERATION ===
     # When API fails mid-build, auto-generate missing critical files
     if all_files and project['language'] == 'python':
+        live_log.append({'icon': '🔧', 'message': 'Now checking for missing critical files...', 'type': 'info'})
         fallback_files = generate_fallback_files(project_path, language='python')
         if fallback_files:
             all_files.extend(fallback_files)
             fallback_names = ', '.join(f['path'] for f in fallback_files)
             add_step('Auto-generating missing files', 'done', f'Created: {fallback_names}')
+            for fb in fallback_files:
+                live_log.append({'icon': '📄', 'message': f'Auto-generated missing file: {fb["path"]}', 'type': 'fix'})
         # Set fallback commands if they were never set (API failed before plan was returned)
+        # Django project detection
+        is_django_project = os.path.isfile(os.path.join(project_path, 'manage.py'))
         if not run_command:
-            if os.path.isfile(os.path.join(project_path, 'run.py')):
+            if is_django_project:
+                run_command = 'python manage.py runserver 0.0.0.0:3002'
+            elif os.path.isfile(os.path.join(project_path, 'run.py')):
                 run_command = 'python run.py'
             elif os.path.isfile(os.path.join(project_path, 'main.py')):
                 run_command = 'python main.py'
         if not install_cmd and os.path.isfile(os.path.join(project_path, 'requirements.txt')):
             install_cmd = 'pip install -r requirements.txt'
         if not test_cmd:
-            if os.path.isfile(os.path.join(project_path, 'run.py')):
+            if is_django_project:
+                test_cmd = 'python manage.py check'
+            elif os.path.isfile(os.path.join(project_path, 'run.py')):
                 test_cmd = 'python -m py_compile run.py'
             elif os.path.isfile(os.path.join(project_path, 'main.py')):
                 test_cmd = 'python -m py_compile main.py'
+        # Django: auto-run migrations after install
+        if is_django_project and install_cmd:
+            live_log.append({'icon': '🗄️', 'message': 'Now setting up Django database migrations...', 'type': 'info'})
 
     # === POST-BUILD SANITIZATION PASS ===
     # Scan ALL files on disk and fix common AI-generated issues
@@ -1670,6 +1825,7 @@ User request: {prompt}"""
     install_result = None
     if install_cmd and all_files:
         step_start = time.time()
+        live_log.append({'icon': '\U0001f4e6', 'message': f'Now installing dependencies: {install_cmd}', 'type': 'install'})
         # Clean non-pip packages (e.g. Bootstrap) from requirements.txt
         sanitize_requirements(project_path)
         # Use --upgrade to avoid version conflicts with system packages
@@ -1711,12 +1867,17 @@ User request: {prompt}"""
 
         status = 'done' if install_result['success'] else 'failed'
         detail = 'Dependencies installed' if install_result['success'] else (install_result.get('stderr', '') or install_result.get('stdout', ''))[:200]
+        if install_result['success']:
+            live_log.append({'icon': '\u2705', 'message': 'Dependencies installed successfully', 'type': 'success'})
+        else:
+            live_log.append({'icon': '\u274c', 'message': f'Dependency installation failed: {detail[:100]}', 'type': 'error'})
         add_step('Installing dependencies', status, detail, time.time() - step_start)
 
     # === TEST → FIX LOOP (up to MAX_FIX_LOOPS) ===
     fix_iterations = []
 
     if test_cmd and all_files:
+        live_log.append({'icon': '\U0001f9ea', 'message': f'Now testing project: {test_cmd}', 'type': 'test'})
         for fix_attempt in range(MAX_FIX_LOOPS + 1):  # 0 = initial test, 1-3 = fix attempts
             step_start = time.time()
             time.sleep(0.5)
@@ -1726,15 +1887,18 @@ User request: {prompt}"""
             if test_result['success']:
                 final_test_passed = True
                 label = 'Testing code' if fix_attempt == 0 else f'Re-testing (attempt {fix_attempt})'
+                live_log.append({'icon': '\u2705', 'message': 'All tests passed successfully!', 'type': 'success'})
                 add_step(label, 'done', 'All tests passed', time.time() - step_start)
                 break
             else:
                 label = 'Testing code' if fix_attempt == 0 else f'Re-testing (attempt {fix_attempt})'
+                live_log.append({'icon': '\u274c', 'message': f'Test failed: {test_output[:120]}', 'type': 'error'})
                 add_step(label, 'failed', test_output[:150], time.time() - step_start)
 
                 # If we still have fix attempts left, call AI to fix
                 if fix_attempt < MAX_FIX_LOOPS:
                     step_start = time.time()
+                    live_log.append({'icon': '\U0001f527', 'message': f'Now attempting auto-fix #{fix_attempt + 1} — analyzing error and patching code...', 'type': 'fix'})
                     current_files_ctx = get_project_files_context(project_path)[0]
                     fix_prompt = f"""Project: {project['name']} (Language: {project['language']})
 
@@ -2104,19 +2268,24 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
 
     if auto_deploy and deploy_ready and run_command:
         step_start = time.time()
+        live_log.append({'icon': '\U0001f680', 'message': f'Now deploying app with command: {run_command}', 'type': 'deploy'})
         try:
             from deploy import deploy_project_internal
             deploy_result = deploy_project_internal(user, project_id, project_path, run_command)
             if deploy_result and deploy_result.get('success'):
+                live_log.append({'icon': '\u2705', 'message': f'App deployed successfully on port {deploy_result.get("port", "?")}', 'type': 'success'})
                 add_step('Deploying app', 'done',
                          f'Running on port {deploy_result.get("port", "?")}',
                          time.time() - step_start)
             else:
                 err = deploy_result.get('error', 'Unknown') if deploy_result else 'Deploy function failed'
+                live_log.append({'icon': '\u274c', 'message': f'Deploy failed: {err[:100]}', 'type': 'error'})
                 add_step('Deploying app', 'failed', err[:150], time.time() - step_start)
         except Exception as e:
             add_step('Deploying app', 'failed', str(e)[:150], time.time() - step_start)
             deploy_result = None
+
+    live_log.append({'icon': '\U0001f3c1', 'message': f'Agent completed: {len(all_files)} files generated, {len(steps)} steps executed', 'type': 'complete'})
 
     return jsonify({
         'agent_executed': True,
@@ -2138,4 +2307,5 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
         'test_actions': test_actions,
         'test_issues': test_issues,
         'tool_actions': tool_actions,
+        'live_log': live_log,
     })
