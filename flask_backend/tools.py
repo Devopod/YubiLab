@@ -867,3 +867,336 @@ def log_progress(user):
         json.dump(entries, f, indent=2)
 
     return jsonify({'success': True})
+
+
+# ══════════════════════════════════════════════════════════════
+# INTERNAL TOOL FUNCTIONS — called directly by AI Agent (no HTTP)
+# These are the same tools but callable as plain Python functions
+# so the autonomous agent can use them during builds.
+# ══════════════════════════════════════════════════════════════
+
+def tool_install_packages(project_path, packages, language='python'):
+    """Install packages internally. Returns dict with results and tool_actions list."""
+    actions = []
+    results = []
+    overall_success = True
+
+    for pkg in packages:
+        pkg = re.sub(r'[;&|`$(){}]', '', pkg).strip()
+        if not pkg:
+            continue
+
+        if language == 'python':
+            cmd = f'pip install --upgrade {pkg}'
+        elif language == 'nodejs':
+            cmd = f'npm install {pkg}'
+        else:
+            results.append({'package': pkg, 'success': False, 'output': 'Unsupported language'})
+            overall_success = False
+            continue
+
+        actions.append({'tool': 'packages', 'action': f'Installing {pkg}', 'icon': '\U0001f4e6'})
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=project_path,
+                capture_output=True, text=True, timeout=120
+            )
+            success = proc.returncode == 0
+            output = proc.stdout[-300:] if proc.stdout else ''
+            if proc.stderr and not success:
+                output += '\n' + proc.stderr[-300:]
+            results.append({'package': pkg, 'success': success, 'output': output.strip()})
+            if success:
+                actions.append({'tool': 'packages', 'action': f'{pkg} installed', 'icon': '\U0001f4e6', 'status': 'pass'})
+            else:
+                actions.append({'tool': 'packages', 'action': f'{pkg} failed', 'icon': '\U0001f4e6', 'status': 'fail', 'detail': output[:100]})
+                overall_success = False
+        except subprocess.TimeoutExpired:
+            results.append({'package': pkg, 'success': False, 'output': 'Timed out'})
+            actions.append({'tool': 'packages', 'action': f'{pkg} timed out', 'icon': '\U0001f4e6', 'status': 'fail'})
+            overall_success = False
+        except Exception as e:
+            results.append({'package': pkg, 'success': False, 'output': str(e)})
+            overall_success = False
+
+    return {'success': overall_success, 'results': results, 'tool_actions': actions}
+
+
+def tool_run_shell(project_path, command, timeout=60):
+    """Run a shell command internally. Returns dict with output and tool_actions."""
+    actions = [{'tool': 'shell', 'action': f'Running: {command[:60]}', 'icon': '\U0001f4bb'}]
+
+    dangerous = ['rm -rf /', 'mkfs', 'dd if=', ':(){', 'fork bomb']
+    if any(d in command.lower() for d in dangerous):
+        actions.append({'tool': 'shell', 'action': 'Dangerous command blocked', 'icon': '\U0001f6ab', 'status': 'fail'})
+        return {'success': False, 'error': 'Dangerous command blocked', 'tool_actions': actions}
+
+    try:
+        proc = subprocess.run(
+            command, shell=True, cwd=project_path,
+            capture_output=True, text=True, timeout=timeout
+        )
+        output = proc.stdout[-2000:] if proc.stdout else ''
+        stderr = proc.stderr[-1000:] if proc.stderr else ''
+        success = proc.returncode == 0
+        if success:
+            actions.append({'tool': 'shell', 'action': f'Command succeeded (exit 0)', 'icon': '\U0001f4bb', 'status': 'pass'})
+        else:
+            actions.append({'tool': 'shell', 'action': f'Command failed (exit {proc.returncode})', 'icon': '\U0001f4bb', 'status': 'fail', 'detail': stderr[:100]})
+        return {'success': success, 'stdout': output, 'stderr': stderr, 'exit_code': proc.returncode, 'tool_actions': actions}
+    except subprocess.TimeoutExpired:
+        actions.append({'tool': 'shell', 'action': f'Command timed out ({timeout}s)', 'icon': '\U0001f4bb', 'status': 'fail'})
+        return {'success': False, 'error': f'Timed out ({timeout}s)', 'tool_actions': actions}
+    except Exception as e:
+        actions.append({'tool': 'shell', 'action': f'Error: {str(e)[:60]}', 'icon': '\U0001f4bb', 'status': 'fail'})
+        return {'success': False, 'error': str(e), 'tool_actions': actions}
+
+
+def tool_execute_sql(project_path, query, db_name=''):
+    """Execute SQL on project database internally. Returns dict with results and tool_actions."""
+    actions = [{'tool': 'database', 'action': f'SQL: {query[:50]}', 'icon': '\U0001f5c4'}]
+
+    db_files = []
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in ('node_modules', '__pycache__', '.git', 'venv')]
+        for f in files:
+            if f.endswith(('.db', '.sqlite', '.sqlite3')):
+                db_files.append(os.path.relpath(os.path.join(root, f), project_path))
+
+    if not db_files:
+        actions.append({'tool': 'database', 'action': 'No database found', 'icon': '\U0001f5c4', 'status': 'info'})
+        return {'success': False, 'error': 'No SQLite database found', 'tool_actions': actions}
+
+    target_db = db_name if db_name in db_files else db_files[0]
+    db_path = os.path.join(project_path, target_db)
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(query)
+
+        sql_upper = query.upper().strip()
+        if sql_upper.startswith('SELECT') or sql_upper.startswith('PRAGMA') or sql_upper.startswith('EXPLAIN'):
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            data_rows = [dict(row) for row in rows]
+            conn.close()
+            actions.append({'tool': 'database', 'action': f'{len(data_rows)} rows returned from {target_db}', 'icon': '\U0001f5c4', 'status': 'pass'})
+            return {'success': True, 'columns': columns, 'rows': data_rows[:100], 'database': target_db, 'tool_actions': actions}
+        else:
+            conn.commit()
+            affected = cursor.rowcount
+            conn.close()
+            actions.append({'tool': 'database', 'action': f'{affected} rows affected in {target_db}', 'icon': '\U0001f5c4', 'status': 'pass'})
+            return {'success': True, 'affected_rows': affected, 'database': target_db, 'tool_actions': actions}
+    except Exception as e:
+        actions.append({'tool': 'database', 'action': f'SQL error: {str(e)[:80]}', 'icon': '\U0001f5c4', 'status': 'fail'})
+        return {'success': False, 'error': str(e), 'tool_actions': actions}
+
+
+def tool_search_code(project_path, query, search_type='text'):
+    """Search project code internally. Returns dict with results and tool_actions."""
+    actions = [{'tool': 'search', 'action': f'Searching: {query[:40]}', 'icon': '\U0001f50d'}]
+
+    results = []
+    skip_dirs = {'node_modules', '__pycache__', '.git', 'venv', 'env', '.venv'}
+    skip_exts = {'.pyc', '.pyo', '.class', '.o', '.so', '.db', '.sqlite', '.png', '.jpg', '.gif', '.ico'}
+
+    if search_type == 'function':
+        patterns = [rf'def\s+{re.escape(query)}\s*\(', rf'function\s+{re.escape(query)}\s*\(']
+    elif search_type == 'class':
+        patterns = [rf'class\s+{re.escape(query)}[\s:(]']
+    else:
+        patterns = [re.escape(query)]
+
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            if len(results) >= 50:
+                break
+            ext = os.path.splitext(fname)[1]
+            if ext in skip_exts:
+                continue
+            fpath = os.path.join(root, fname)
+            rel_path = os.path.relpath(fpath, project_path)
+            try:
+                with open(fpath, 'r', errors='replace') as f:
+                    lines = f.readlines()
+                for i, line in enumerate(lines):
+                    if len(results) >= 50:
+                        break
+                    for pat in patterns:
+                        if re.search(pat, line, re.IGNORECASE if search_type == 'text' else 0):
+                            results.append({'file': rel_path, 'line': i + 1, 'content': line.rstrip()[:200]})
+                            break
+            except Exception:
+                continue
+
+    actions.append({'tool': 'search', 'action': f'Found {len(results)} matches', 'icon': '\U0001f50d', 'status': 'pass' if results else 'info'})
+    return {'success': True, 'results': results, 'total': len(results), 'tool_actions': actions}
+
+
+def tool_set_env_var(project_path, key, value):
+    """Set an environment variable in the project .env file. Returns tool_actions."""
+    actions = [{'tool': 'secrets', 'action': f'Setting {key}=...', 'icon': '\U0001f510'}]
+
+    env_path = os.path.join(project_path, '.env')
+    env_vars = {}
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    env_vars[k.strip()] = v.strip()
+
+    env_vars[key] = value
+    with open(env_path, 'w') as f:
+        for k, v in env_vars.items():
+            f.write(f'{k}={v}\n')
+
+    actions.append({'tool': 'secrets', 'action': f'{key} saved to .env', 'icon': '\U0001f510', 'status': 'pass'})
+    return {'success': True, 'tool_actions': actions}
+
+
+def tool_set_workflow(project_path, name, command, is_run_button=False):
+    """Configure a workflow/run command. Returns tool_actions."""
+    actions = [{'tool': 'workflows', 'action': f'Setting workflow: {name}', 'icon': '\u2699\ufe0f'}]
+
+    config_dir = os.path.join(project_path, '.yubilab')
+    config_path = os.path.join(config_dir, 'workflows.json')
+    os.makedirs(config_dir, exist_ok=True)
+
+    workflows = []
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                workflows = json.load(f)
+        except Exception:
+            pass
+
+    found = False
+    for wf in workflows:
+        if wf.get('name') == name:
+            wf['command'] = command
+            wf['is_run_button'] = is_run_button
+            found = True
+            break
+    if not found:
+        workflows.append({'name': name, 'command': command, 'is_run_button': is_run_button})
+
+    if is_run_button:
+        for wf in workflows:
+            if wf['name'] != name:
+                wf['is_run_button'] = False
+
+    with open(config_path, 'w') as f:
+        json.dump(workflows, f, indent=2)
+
+    actions.append({'tool': 'workflows', 'action': f'Workflow "{name}" configured', 'icon': '\u2699\ufe0f', 'status': 'pass'})
+    return {'success': True, 'tool_actions': actions}
+
+
+def tool_get_project_info(project_path):
+    """Get project info internally. Returns dict with stats and tool_actions."""
+    actions = [{'tool': 'info', 'action': 'Analyzing project...', 'icon': '\u2139\ufe0f'}]
+
+    file_count = 0
+    total_size = 0
+    extensions = {}
+    skip_dirs = {'node_modules', '__pycache__', '.git', 'venv', 'env', '.venv'}
+
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for f in files:
+            fpath = os.path.join(root, f)
+            file_count += 1
+            try:
+                total_size += os.path.getsize(fpath)
+            except Exception:
+                pass
+            ext = os.path.splitext(f)[1].lower()
+            extensions[ext] = extensions.get(ext, 0) + 1
+
+    db_files = []
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for f in files:
+            if f.endswith(('.db', '.sqlite', '.sqlite3')):
+                db_files.append(os.path.relpath(os.path.join(root, f), project_path))
+
+    actions.append({
+        'tool': 'info', 'icon': '\u2139\ufe0f', 'status': 'pass',
+        'action': f'{file_count} files, {total_size // 1024}KB, {len(db_files)} databases'
+    })
+
+    return {
+        'success': True, 'file_count': file_count, 'total_size': total_size,
+        'extensions': extensions, 'databases': db_files, 'tool_actions': actions
+    }
+
+
+def execute_tool_commands(project_path, tool_commands):
+    """Execute a list of tool commands autonomously.
+    Each command: {"tool": "packages|shell|sql|search|secrets|workflows|info", ...params}
+    Returns list of all tool_actions for UI display."""
+    all_actions = []
+
+    for cmd in tool_commands:
+        tool = cmd.get('tool', '')
+        try:
+            if tool == 'packages':
+                packages = cmd.get('packages', [])
+                language = cmd.get('language', 'python')
+                if packages:
+                    result = tool_install_packages(project_path, packages, language)
+                    all_actions.extend(result.get('tool_actions', []))
+
+            elif tool == 'shell':
+                command = cmd.get('command', '')
+                timeout = cmd.get('timeout', 60)
+                if command:
+                    result = tool_run_shell(project_path, command, timeout)
+                    all_actions.extend(result.get('tool_actions', []))
+
+            elif tool == 'sql':
+                query = cmd.get('query', '')
+                db_name = cmd.get('db_name', '')
+                if query:
+                    result = tool_execute_sql(project_path, query, db_name)
+                    all_actions.extend(result.get('tool_actions', []))
+
+            elif tool == 'search':
+                query = cmd.get('query', '')
+                search_type = cmd.get('type', 'text')
+                if query:
+                    result = tool_search_code(project_path, query, search_type)
+                    all_actions.extend(result.get('tool_actions', []))
+
+            elif tool == 'secrets':
+                key = cmd.get('key', '')
+                value = cmd.get('value', '')
+                if key:
+                    result = tool_set_env_var(project_path, key, value)
+                    all_actions.extend(result.get('tool_actions', []))
+
+            elif tool == 'workflows':
+                name = cmd.get('name', '')
+                command = cmd.get('command', '')
+                is_run = cmd.get('is_run_button', False)
+                if name and command:
+                    result = tool_set_workflow(project_path, name, command, is_run)
+                    all_actions.extend(result.get('tool_actions', []))
+
+            elif tool == 'info':
+                result = tool_get_project_info(project_path)
+                all_actions.extend(result.get('tool_actions', []))
+
+            else:
+                all_actions.append({'tool': tool, 'action': f'Unknown tool: {tool}', 'icon': '\u2753', 'status': 'fail'})
+
+        except Exception as e:
+            all_actions.append({'tool': tool, 'action': f'Error: {str(e)[:80]}', 'icon': '\u274c', 'status': 'fail'})
+
+    return all_actions

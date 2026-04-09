@@ -199,18 +199,33 @@ AGENT_SYSTEM_PROMPT = """You are YubiAI, an elite autonomous AI software enginee
 - Implement authentication, form validation, error handling
 - Work with Flask, Django, Express, React, Vue, PHP, Go, Java, Ruby, Rust, and more
 
-## REPLIT-LIKE TOOLS (Available in YubiLab IDE)
-The IDE provides these developer tools that users can use alongside your generated code:
-- **Package Manager**: Install/uninstall packages (pip, npm) directly from the IDE
-- **SQL Database Explorer**: Query SQLite databases, view schemas, run SQL commands
-- **Code Search**: Search project files by text, function names, class names, or regex
-- **Workflow Manager**: Configure run commands, set up background tasks, port forwarding
-- **Secrets Manager**: Manage .env files and environment variables securely
-- **Quick Shell**: Run shell commands in the project directory
-- **Project Info**: View file counts, sizes, dependencies, and database info
+## AI-POWERED DEVELOPER TOOLS (Autonomous)
+You have direct access to these developer tools that you MUST use autonomously during builds.
+Include a "tool_commands" array in your JSON response to execute tools automatically:
 
-When building projects that use databases, ensure your code creates and manages SQLite databases properly so the SQL Explorer can inspect them.
-When projects need environment variables, mention that users can set them via the Secrets tool in the IDE.
+### Available Tools:
+- **packages**: Install/uninstall packages (pip, npm)
+  `{"tool": "packages", "packages": ["flask", "sqlalchemy"], "language": "python"}`
+- **shell**: Run shell commands in the project directory
+  `{"tool": "shell", "command": "python -m flask db init"}`
+- **sql**: Execute SQL on project databases
+  `{"tool": "sql", "query": "SELECT * FROM users LIMIT 5"}`
+- **search**: Search project code for patterns
+  `{"tool": "search", "query": "def login", "type": "function"}`
+- **secrets**: Set environment variables in .env
+  `{"tool": "secrets", "key": "SECRET_KEY", "value": "my-secret-key-123"}`
+- **workflows**: Configure run commands
+  `{"tool": "workflows", "name": "Run App", "command": "python run.py", "is_run_button": true}`
+- **info**: Get project file stats and database info
+  `{"tool": "info"}`
+
+### When to use tools:
+- ALWAYS use "packages" to install dependencies instead of just listing them in requirements.txt
+- ALWAYS use "secrets" to set SECRET_KEY and other env vars the app needs
+- ALWAYS use "workflows" to configure the run command for the project
+- Use "shell" for database migrations, file permissions, or build steps
+- Use "sql" to verify database tables were created correctly
+- Use "info" to analyze existing project structure before making changes
 
 ## RESPONSE FORMAT
 You MUST respond with ONLY a valid JSON object. No markdown, no explanation outside JSON.
@@ -232,6 +247,12 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
   "run_command": "command to run the app (e.g., python app.py)",
   "test_command": "command to verify the app works (e.g., python -c \\"import app\\" or python -m py_compile app.py)",
   "install_command": "pip install -r requirements.txt (if needed)",
+  "tool_commands": [
+    {"tool": "packages", "packages": ["flask", "flask-sqlalchemy", "flask-wtf"], "language": "python"},
+    {"tool": "secrets", "key": "SECRET_KEY", "value": "auto-generated-secret-key"},
+    {"tool": "workflows", "name": "Run App", "command": "python run.py", "is_run_button": true},
+    {"tool": "shell", "command": "python -c \\"from app import create_app; create_app()\\""}
+  ],
   "deploy_ready": false,
   "message": "Brief summary of what was done"
 }
@@ -1577,6 +1598,74 @@ User request: {prompt}"""
                      f'Fixed {len(sanitized)} files: {", ".join(sanitized[:5])}',
                      time.time() - step_start)
 
+    # === AI-POWERED AUTONOMOUS TOOL EXECUTION ===
+    # Execute tool_commands from agent response + auto-generate smart tool commands
+    tool_actions = []  # Collects all tool actions for UI display
+    if all_files:
+        step_start = time.time()
+        from tools import execute_tool_commands, tool_install_packages, tool_set_env_var, tool_set_workflow, tool_run_shell, tool_get_project_info
+
+        # 1. Collect tool_commands from ALL agent responses (single, multi, fix)
+        ai_tool_commands = []
+        if error_context:
+            # Bug fix mode — check the single response
+            try:
+                if agent_response and agent_response.get('tool_commands'):
+                    ai_tool_commands.extend(agent_response['tool_commands'])
+            except Exception:
+                pass
+        elif is_large:
+            # Multi-request — check plan and all batch responses
+            try:
+                if plan_response and plan_response.get('tool_commands'):
+                    ai_tool_commands.extend(plan_response['tool_commands'])
+            except Exception:
+                pass
+        else:
+            # Single-request — check the response
+            try:
+                if agent_response and agent_response.get('tool_commands'):
+                    ai_tool_commands.extend(agent_response['tool_commands'])
+            except Exception:
+                pass
+
+        # 2. Auto-generate smart tool commands if AI didn't provide them
+        auto_commands = []
+
+        # Auto: Set SECRET_KEY if Flask project and no tool_commands set it
+        has_secret_key_cmd = any(c.get('tool') == 'secrets' and c.get('key') == 'SECRET_KEY' for c in ai_tool_commands)
+        if not has_secret_key_cmd and project['language'] == 'python':
+            # Check if any file uses SECRET_KEY
+            for f in all_files:
+                content = f.get('content', '') if isinstance(f, dict) else ''
+                if 'SECRET_KEY' in content or 'secret_key' in content.lower():
+                    import secrets as _secrets
+                    auto_commands.append({'tool': 'secrets', 'key': 'SECRET_KEY', 'value': _secrets.token_hex(24)})
+                    break
+
+        # Auto: Set workflow if run_command is known
+        has_workflow_cmd = any(c.get('tool') == 'workflows' for c in ai_tool_commands)
+        if not has_workflow_cmd and run_command:
+            auto_commands.append({'tool': 'workflows', 'name': 'Run App', 'command': run_command, 'is_run_button': True})
+
+        # Auto: Get project info after build
+        has_info_cmd = any(c.get('tool') == 'info' for c in ai_tool_commands)
+        if not has_info_cmd:
+            auto_commands.append({'tool': 'info'})
+
+        # Execute all tool commands (AI-provided first, then auto-generated)
+        all_tool_commands = ai_tool_commands + auto_commands
+        if all_tool_commands:
+            tool_actions = execute_tool_commands(project_path, all_tool_commands)
+            ai_count = len(ai_tool_commands)
+            auto_count = len(auto_commands)
+            detail = f'{len(tool_actions)} actions'
+            if ai_count:
+                detail += f' ({ai_count} AI-driven)'
+            if auto_count:
+                detail += f' ({auto_count} auto)'
+            add_step('Running Developer Tools', 'done', detail, time.time() - step_start)
+
     # === INSTALL DEPENDENCIES ===
     install_result = None
     if install_cmd and all_files:
@@ -2048,4 +2137,5 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
         'deploy_result': deploy_result,
         'test_actions': test_actions,
         'test_issues': test_issues,
+        'tool_actions': tool_actions,
     })

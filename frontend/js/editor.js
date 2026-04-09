@@ -1078,6 +1078,39 @@ function renderAgentResult(data) {
         html += `</div>`;
     }
 
+    // AI-Powered Developer Tools (autonomous tool actions)
+    if (data.tool_actions && data.tool_actions.length > 0) {
+        const toolPassCount = data.tool_actions.filter(a => a.status === 'pass').length;
+        const toolFailCount = data.tool_actions.filter(a => a.status === 'fail').length;
+        const toolSummaryColor = toolFailCount > 0 ? '#f85149' : '#3fb950';
+        const toolSummaryText = toolFailCount > 0 ? `${toolFailCount} failed` : 'All succeeded';
+
+        html += `<div style="margin-top:10px;border:1px solid var(--border-color, #30363d);border-radius:8px;overflow:hidden;">`;
+        html += `<div style="background:linear-gradient(135deg,#1a1b2e,#2d1b40);padding:8px 12px;display:flex;align-items:center;justify-content:space-between;">`;
+        html += `<strong style="font-size:0.82rem;color:#e6e6e6;">\u{1F916} AI-Powered Tools</strong>`;
+        html += `<span style="font-size:0.7rem;color:${toolSummaryColor};font-weight:600;">${toolPassCount} passed \u00b7 ${toolSummaryText}</span>`;
+        html += `</div>`;
+        html += `<div style="max-height:250px;overflow-y:auto;padding:6px 0;">`;
+        data.tool_actions.forEach((act, i) => {
+            let bg = 'transparent';
+            let textColor = 'var(--text-secondary, #8b949e)';
+            if (act.status === 'pass') { bg = 'rgba(63,185,80,0.08)'; textColor = '#3fb950'; }
+            else if (act.status === 'fail') { bg = 'rgba(248,81,73,0.08)'; textColor = '#f85149'; }
+            else if (act.status === 'info') { bg = 'rgba(88,166,255,0.05)'; textColor = '#58a6ff'; }
+            const toolIcon = act.icon || '\u{1F527}';
+            const toolLabel = act.tool ? `<span style="font-size:0.65rem;background:rgba(240,136,62,0.15);color:#f0883e;padding:1px 5px;border-radius:4px;margin-right:4px;">${act.tool}</span>` : '';
+            html += `<div style="padding:4px 12px;background:${bg};display:flex;align-items:flex-start;gap:8px;border-bottom:1px solid rgba(255,255,255,0.03);">`;
+            html += `<span style="font-size:0.78rem;min-width:18px;">${toolIcon}</span>`;
+            html += `<div style="flex:1;min-width:0;">`;
+            html += `<div style="font-size:0.78rem;font-weight:500;color:${textColor};">${toolLabel}${escapeHtml(act.action)}</div>`;
+            if (act.detail) {
+                html += `<div style="font-size:0.68rem;color:var(--text-secondary,#8b949e);margin-top:1px;opacity:0.8;">${escapeHtml(act.detail)}</div>`;
+            }
+            html += `</div></div>`;
+        });
+        html += `</div></div>`;
+    }
+
     // Interactive Test Actions (Devin-like testing log)
     if (data.test_actions && data.test_actions.length > 0) {
         const passCount = data.test_actions.filter(a => a.status === 'pass').length;
