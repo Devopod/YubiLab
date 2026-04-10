@@ -858,6 +858,14 @@ function switchBottomTab(panel) {
             initSearchPanel();
         }
     }
+    if (panel === 'browser') {
+        // If browser has a URL loaded, make sure iframe is visible
+        const browserFrame = document.getElementById('browser-frame');
+        if (browserFrame && browserFrame.src && browserFrame.src !== 'about:blank') {
+            browserFrame.style.display = 'block';
+            document.getElementById('browser-empty').style.display = 'none';
+        }
+    }
 }
 
 function toggleBottomPanel() {
@@ -983,11 +991,11 @@ async function sendAIMessage() {
         if (aiAction === 'agent' && data.agent_executed) {
             renderAgentResult(data);
             await refreshFiles();
-            // Auto-open preview if deployed
+            // Auto-open in built-in browser if deployed
             if (data.deploy_result && data.deploy_result.success) {
                 setTimeout(() => {
-                    document.getElementById('preview-frame').src = `${data.deploy_result.url}?t=${Date.now()}`;
-                    switchBottomTab('preview');
+                    const appUrl = data.deploy_result.url;
+                    openInBrowser(appUrl);
                 }, 1000);
             }
         } else if (data.response) {
@@ -1244,11 +1252,10 @@ async function agentDeploy() {
         if (res.ok) {
             showToast(data.ready ? `Deployed and ready on port ${data.port}!` : `Deployed on port ${data.port} (starting...)`, data.ready ? 'success' : 'info');
             setStatus(`Deployed (port ${data.port})`);
-            addAIMessage(`✅ Deployed successfully!\nPort: ${data.port}\nURL: ${window.location.origin}${data.url}\n\nOpening preview...`, 'system');
+            addAIMessage(`✅ Deployed successfully!\nPort: ${data.port}\nURL: ${window.location.origin}${data.url}\n\nOpening in browser...`, 'system');
             const agentDelay = data.ready ? 200 : 2000;
             setTimeout(() => {
-                document.getElementById('preview-frame').src = `${data.url}?t=${Date.now()}`;
-                switchBottomTab('preview');
+                openInBrowser(data.url);
             }, agentDelay);
             loadDeployments();
         } else {
@@ -1646,6 +1653,86 @@ async function deleteDeployment(deployId) {
 
 // ============================================
 // UTILITIES
+// ============================================
+
+// ============================================
+// BUILT-IN BROWSER PANEL (Devin-like)
+// ============================================
+
+let _browserHistory = [];
+let _browserHistoryIndex = -1;
+
+function openInBrowser(url) {
+    if (!url) return;
+    // Ensure URL has protocol
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = window.location.origin + url;
+    }
+    const frame = document.getElementById('browser-frame');
+    const urlBar = document.getElementById('browser-url-bar');
+    const emptyState = document.getElementById('browser-empty');
+    if (frame) {
+        frame.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+        frame.style.display = 'block';
+        if (emptyState) emptyState.style.display = 'none';
+    }
+    if (urlBar) urlBar.value = url;
+    // Add to history
+    _browserHistory = _browserHistory.slice(0, _browserHistoryIndex + 1);
+    _browserHistory.push(url);
+    _browserHistoryIndex = _browserHistory.length - 1;
+    // Switch to browser tab
+    switchBottomTab('browser');
+    showToast('App opened in browser', 'success');
+}
+
+function browserNavigate(url) {
+    if (!url || !url.trim()) return;
+    url = url.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
+    openInBrowser(url);
+}
+
+function browserBack() {
+    if (_browserHistoryIndex > 0) {
+        _browserHistoryIndex--;
+        const url = _browserHistory[_browserHistoryIndex];
+        const frame = document.getElementById('browser-frame');
+        const urlBar = document.getElementById('browser-url-bar');
+        if (frame) frame.src = url;
+        if (urlBar) urlBar.value = url;
+    }
+}
+
+function browserForward() {
+    if (_browserHistoryIndex < _browserHistory.length - 1) {
+        _browserHistoryIndex++;
+        const url = _browserHistory[_browserHistoryIndex];
+        const frame = document.getElementById('browser-frame');
+        const urlBar = document.getElementById('browser-url-bar');
+        if (frame) frame.src = url;
+        if (urlBar) urlBar.value = url;
+    }
+}
+
+function browserReload() {
+    const frame = document.getElementById('browser-frame');
+    if (frame && frame.src && frame.src !== 'about:blank') {
+        frame.src = frame.src;
+    }
+}
+
+function browserOpenExternal() {
+    const urlBar = document.getElementById('browser-url-bar');
+    if (urlBar && urlBar.value) {
+        window.open(urlBar.value, '_blank');
+    }
+}
+
+// ============================================
+// NAVIGATION
 // ============================================
 
 function goBack() {

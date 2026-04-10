@@ -17,14 +17,59 @@ def get_project_path(user_id, project_name):
     return os.path.join(WORKSPACES_DIR, str(user_id), safe_name)
 
 
-def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=8):
-    """Call YubiAI API with automatic retry and aggressive backoff for Render cold starts.
+# Track API warm status to avoid redundant pre-warm calls
+_api_warm = False
+_api_warm_time = 0
+
+
+def prewarm_api():
+    """Pre-warm the YubiAI API by sending a lightweight ping request.
+    Render free tier sleeps after inactivity — this wakes it up before the real request.
+    Returns True if API is responsive, False otherwise."""
+    global _api_warm, _api_warm_time
+    # Skip if already warmed within last 5 minutes
+    if _api_warm and (time.time() - _api_warm_time) < 300:
+        return True
+    if not YUBIAI_API_URL or not YUBIAI_API_KEY:
+        return False
+    # Try a lightweight request to wake the server
+    for attempt in range(6):  # 6 attempts over ~60s
+        try:
+            resp = requests.post(
+                YUBIAI_API_URL,
+                headers={
+                    "Authorization": f"Bearer {YUBIAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={"message": "ping", "model": "gpt-oss-120b", "max_tokens": 5},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                _api_warm = True
+                _api_warm_time = time.time()
+                return True
+            if resp.status_code in (401, 403):
+                return False  # Auth issue, no point retrying
+        except Exception:
+            pass
+        if attempt < 5:
+            time.sleep([5, 8, 10, 12, 15][min(attempt, 4)])
+    return False
+
+
+def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=10):
+    """Call YubiAI API with automatic retry, pre-warming, and aggressive backoff.
     Render free tier sleeps after inactivity and takes 30-90s to wake up.
-    Retry schedule: 5s, 8s, 12s, 15s, 20s, 25s, 30s (total ~115s covers even slow cold starts)."""
+    Pre-warms API on first call, then uses aggressive retry schedule."""
+    global _api_warm, _api_warm_time
     if not YUBIAI_API_KEY:
         return {"error": "YubiAI API key not configured. Set YUBIAI_API_KEY environment variable."}
     if not YUBIAI_API_URL:
         return {"error": "YubiAI API URL not configured. Set YUBIAI_API_URL environment variable."}
+
+    # Pre-warm API if not already warm (handles Render cold starts)
+    if not _api_warm or (time.time() - _api_warm_time) > 300:
+        prewarm_api()
 
     payload = {
         "message": message,
@@ -49,32 +94,42 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
                 timeout=180,
             )
             if resp.status_code == 200:
+                _api_warm = True
+                _api_warm_time = time.time()
                 return resp.json()
             error_text = resp.text
             if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
                 last_error = "YubiAI API endpoint is offline or unreachable."
             elif resp.status_code == 401:
                 return {"error": "YubiAI API authentication failed. Check your API key."}
+            elif resp.status_code == 403:
+                # 403 can be transient on Render — retry a few times before giving up
+                last_error = "YubiAI API returned 403 Forbidden — retrying..."
+                if attempt >= 3:
+                    return {"error": "YubiAI API returned 403 Forbidden. Check your API key or server status."}
             elif resp.status_code == 429:
                 last_error = "YubiAI API rate limit exceeded."
             elif resp.status_code == 404:
                 last_error = "YubiAI API endpoint not found (404)."
             elif resp.status_code == 503:
                 last_error = "YubiAI server is waking up (503). Free-tier servers sleep after inactivity — retrying..."
+                _api_warm = False  # Mark as not warm so next call pre-warms again
             elif resp.status_code == 502:
                 last_error = "YubiAI server returned 502 Bad Gateway — retrying..."
+                _api_warm = False
             else:
                 last_error = f"YubiAI API returned HTTP {resp.status_code}."
         except requests.exceptions.ConnectionError:
             last_error = "Cannot connect to YubiAI API. The server may be waking up — retrying..."
+            _api_warm = False
         except requests.exceptions.Timeout:
             last_error = "YubiAI API request timed out (180s)."
         except Exception as e:
             last_error = f"YubiAI API error: {str(e)}"
 
-        # Aggressive backoff: 5, 8, 12, 15, 20, 25, 30s — covers Render cold starts up to ~90s
+        # Aggressive backoff: 5, 8, 12, 15, 20, 25, 30, 30, 30s — covers Render cold starts up to ~120s
         if attempt < retries - 1:
-            backoff_schedule = [5, 8, 12, 15, 20, 25, 30]
+            backoff_schedule = [5, 8, 12, 15, 20, 25, 30, 30, 30]
             wait_secs = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
             time.sleep(wait_secs)
 
@@ -181,23 +236,41 @@ def execute_test_command(project_path, command, timeout=30):
         return {'returncode': -1, 'stdout': '', 'stderr': str(e), 'success': False}
 
 
-# The powerful autonomous agent system prompt
-AGENT_SYSTEM_PROMPT = """You are YubiAI, an elite autonomous AI software engineer inside YubiLab Cloud IDE — comparable to Devin AI. You think step by step, plan meticulously before coding, write production-quality code, and iterate relentlessly until the project works perfectly. You have a 32k token context window.
+# The powerful autonomous agent system prompt (Devin-like)
+AGENT_SYSTEM_PROMPT = """You are YubiAI, an elite autonomous AI software engineer inside YubiLab Cloud IDE — comparable to Devin AI. You are a real code-wiz: few programmers are as talented as you at understanding codebases, writing functional and clean code, and iterating on your changes until they are correct. You think step by step, plan meticulously before coding, write production-quality code, and iterate relentlessly until the project works perfectly. You have a 32k token context window.
+
+## APPROACH TO WORK
+- Fulfill the user's request using all tools available to you
+- When encountering difficulties, take time to gather information before concluding a root cause
+- When struggling to pass tests, never modify tests — the root cause is usually in your code
+- Think through architecture BEFORE writing code — plan first, implement second
+- ALWAYS verify your code compiles and imports correctly before declaring success
 
 ## YOUR CAPABILITIES
 - Create, modify, and delete project files across any language/framework
-- Architect and build entire full-stack projects from scratch
-- Debug and fix errors by analyzing error output and stack traces
+- Architect and build entire full-stack projects from scratch (SaaS, e-commerce, dashboards, chatbots, etc.)
+- Debug and fix errors by analyzing error output and stack traces — fix ROOT CAUSE, not symptoms
 - Incrementally update code (only change what's needed, never rewrite working code)
 - Generate run commands, test commands, and install commands
 - Set up proper project structure with config files, dependencies, and scripts
 - Create responsive, modern UIs with CSS animations and glassmorphism
-- Build REST APIs, WebSocket servers, database integrations
+- Build REST APIs, WebSocket servers, database integrations (SQLite, PostgreSQL, MongoDB)
 - Handle environment variables, port configuration, and deployment setup
 - Write unit tests and integration tests
 - Optimize performance and fix memory leaks
-- Implement authentication, form validation, error handling
+- Implement authentication (session, JWT, OAuth), form validation, error handling
 - Work with Flask, Django, Express, React, Vue, PHP, Go, Java, Ruby, Rust, and more
+- Test apps autonomously by navigating pages, filling forms, submitting, and verifying responses
+- Open a built-in browser to visually test deployed apps — just like Devin AI
+
+## CODING BEST PRACTICES (Devin-like)
+- Do not add comments unless the code is complex and requires additional context
+- When making changes, first understand the file's code conventions — mimic style, use existing libraries
+- NEVER assume a library is available — check package.json, requirements.txt, cargo.toml first
+- When you create a new component, look at existing ones for framework choice, naming, typing conventions
+- When you edit code, look at surrounding context (imports, patterns) to stay idiomatic
+- Always follow security best practices — never expose or log secrets/keys
+- Never commit secrets or keys to the repository
 
 ## AI-POWERED DEVELOPER TOOLS (Autonomous)
 You have direct access to these developer tools that you MUST use autonomously during builds.
@@ -226,6 +299,14 @@ Include a "tool_commands" array in your JSON response to execute tools automatic
 - Use "shell" for database migrations, file permissions, or build steps
 - Use "sql" to verify database tables were created correctly
 - Use "info" to analyze existing project structure before making changes
+
+## BROWSER TESTING (Devin-like)
+After building and deploying, YubiLab will open your app in a built-in browser panel.
+The browser panel shows your running app in an iframe so users can:
+- Manually test the app by clicking, typing, and navigating
+- See the app render live without leaving the IDE
+- Verify responsive design, forms, animations, and all UI elements
+You should build apps that work correctly when opened in this embedded browser.
 
 ## RESPONSE FORMAT
 You MUST respond with ONLY a valid JSON object. No markdown, no explanation outside JSON.
@@ -259,11 +340,13 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 
 ## CRITICAL RULES
 
-### Planning
+### Planning (Devin-like)
 - ALWAYS include a detailed roadmap showing your step-by-step plan
 - Think about the project structure, architecture, and file relationships BEFORE writing code
 - Consider dependencies, imports, data flow, and edge cases
 - For large projects, break into logical modules and components
+- Gather all information needed to fulfill the task BEFORE coding
+- If unsure about requirements, make reasonable assumptions and document them
 
 ### Incremental Changes
 - When the project already has files, ONLY modify files that need changes
@@ -300,10 +383,20 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without version pins to avoid conflicts with the system Python packages
 - For SQLAlchemy config: do NOT add excessive PRAGMA statements in SQLALCHEMY_ENGINE_OPTIONS — keep it minimal or empty
 
+### Django Compatibility (CRITICAL)
+- Always include manage.py, settings.py, urls.py, wsgi.py, asgi.py
+- Use Django's built-in auth system when possible
+- Always include CSRF middleware and token in forms
+- Use {% csrf_token %} in Django templates (not the Flask version)
+- Configure ALLOWED_HOSTS = ['*'] for development
+- Use SQLite as default database (db.sqlite3)
+- For port: use os.environ.get('PORT', '3002') — NEVER 5000 or 3001
+
 ### Port Configuration
 - NEVER use port 5000 (YubiLab backend uses it)
 - NEVER use port 3001 (Node engine uses it)
 - For Flask apps: use os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 3002))
+- For Django: use os.environ.get('PORT', '3002')
 - For Streamlit: use --server.port with PORT env var
 - For Node.js: use process.env.PORT || 3002
 - For any web server: read PORT from environment, default to 3002
@@ -311,6 +404,7 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 ### Testing
 - Always provide a test_command that can verify the code compiles/imports correctly
 - For Python: python -m py_compile <main_file> or python -c "import <module>"
+- For Django: python manage.py check
 - For Node.js: node -c <file> or node -e "require('./<file>')"
 - For compilable languages: the compile command itself
 
@@ -318,11 +412,13 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Set deploy_ready=true ONLY when the app is fully functional and tested
 - Set deploy_ready=false during initial build, debugging, or partial updates
 
-### Bug Fixing
+### Bug Fixing (Devin-like)
 - When given error output, analyze the EXACT error message and traceback
 - Fix the ROOT CAUSE, not just the symptom
 - Only modify files that have the bug — don't rewrite everything
 - Explain what the bug was and how you fixed it in the message
+- Take time to gather information before concluding a root cause
+- Consider that the issue might be in a different file than where the error appears
 
 ### UI/UX Best Practices
 - Use modern, dark-themed designs with glassmorphism effects
@@ -330,7 +426,8 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Make all layouts fully responsive (mobile, tablet, desktop)
 - Use gradient colors, subtle shadows, and rounded corners
 - Add hover effects on interactive elements
-- Include proper loading spinners and skeleton screens"""
+- Include proper loading spinners and skeleton screens
+- Design for the embedded browser panel — make sure layouts work in iframes"""
 
 
 # Planning-only system prompt for multi-request agent
