@@ -1671,8 +1671,17 @@ async function checkFlutterStatus() {
         const data = await res.json();
         _flutterStatus = data;
         const btn = document.getElementById('flutter-build-btn');
+        const dlBtn = document.getElementById('flutter-download-apk-btn');
         if (btn && data.is_flutter) {
             btn.style.display = '';
+        }
+        // Show/hide download APK button based on build status
+        if (dlBtn && data.is_flutter && data.apk_built) {
+            dlBtn.style.display = '';
+            dlBtn.title = `Download APK (${data.apk_size_human || ''})`;
+            dlBtn.innerHTML = `⬇ Download APK${data.apk_size_human ? ' (' + data.apk_size_human + ')' : ''}`;
+        } else if (dlBtn) {
+            dlBtn.style.display = 'none';
         }
     } catch (e) {
         // Not a Flutter project or endpoint not available
@@ -1779,8 +1788,15 @@ async function flutterBuild(type) {
                 appendConsole(`\nAPK built successfully!\n`, 'success');
                 appendConsole(`Size: ${data.size_human}\n`, 'info');
                 appendConsole(`Download: ${data.download_url}\n`, 'info');
-                showToast(`APK built! Size: ${data.size_human}. Click Build > Download APK.`, 'success');
+                showToast(`APK built! Size: ${data.size_human}. Click "Download APK" to download.`, 'success');
                 setStatus(`APK ready (${data.size_human})`);
+                // Immediately show the download button
+                const dlBtn = document.getElementById('flutter-download-apk-btn');
+                if (dlBtn) {
+                    dlBtn.style.display = '';
+                    dlBtn.innerHTML = `⬇ Download APK (${data.size_human})`;
+                    dlBtn.title = `Download APK (${data.size_human})`;
+                }
             }
             // Refresh flutter status for download buttons
             checkFlutterStatus();
