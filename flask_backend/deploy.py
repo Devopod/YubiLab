@@ -145,6 +145,18 @@ def detect_run_command(project_path, language):
     if language == 'rust' or 'Cargo.toml' in files:
         return 'cargo run'
 
+    if language == 'dart' or 'pubspec.yaml' in files:
+        # Flutter/Dart project
+        if os.path.isfile(os.path.join(project_path, 'pubspec.yaml')):
+            try:
+                with open(os.path.join(project_path, 'pubspec.yaml'), 'r') as fh:
+                    content = fh.read()
+                    if 'flutter' in content:
+                        return 'flutter pub get && flutter run -d web --web-port {port} --web-hostname 0.0.0.0'
+            except Exception:
+                pass
+            return 'dart run'
+
     if language == 'html':
         return 'python3 -m http.server {port}'
 

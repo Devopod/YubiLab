@@ -29,7 +29,11 @@ Thumbs.db
 *.swo
 
 # Test files
-test-plan.md
+test-plan*.md
+test-results*.md
+
+# Logs
+logs/
 
 # YubiLab
 user_workspaces/

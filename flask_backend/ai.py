@@ -259,7 +259,8 @@ AGENT_SYSTEM_PROMPT = """You are YubiAI, an elite autonomous AI software enginee
 - Write unit tests and integration tests
 - Optimize performance and fix memory leaks
 - Implement authentication (session, JWT, OAuth), form validation, error handling
-- Work with Flask, Django, Express, React, Vue, PHP, Go, Java, Ruby, Rust, and more
+- Work with Flask, Django, Express, React, Vue, PHP, Go, Java, Ruby, Rust, Flutter/Dart, and more
+- Build mobile apps with Flutter (Android & iOS) — generate full project structure with lib/, pubspec.yaml, widgets, screens, state management
 - Test apps autonomously by navigating pages, filling forms, submitting, and verifying responses
 - Open a built-in browser to visually test deployed apps — just like Devin AI
 
@@ -392,6 +393,23 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Configure ALLOWED_HOSTS = ['*'] for development
 - Use SQLite as default database (db.sqlite3)
 - For port: use os.environ.get('PORT', '3002') — NEVER 5000 or 3001
+
+### Flutter/Dart (Mobile App Development)
+- For Flutter projects: generate pubspec.yaml, lib/main.dart, lib/screens/, lib/widgets/, lib/models/, lib/services/
+- Use Material Design 3 (Material You) with ThemeData and ColorScheme
+- Always include proper pubspec.yaml with flutter SDK constraint and dependencies
+- Use StatelessWidget and StatefulWidget appropriately
+- For state management: use Provider, Riverpod, or setState for simple apps
+- Include proper AndroidManifest.xml permissions if needed (internet, camera, etc.)
+- Include proper Info.plist permissions for iOS if needed
+- For navigation: use Navigator 2.0 or go_router for complex routing
+- Always include `flutter: sdk: flutter` in pubspec.yaml dependencies
+- For HTTP requests: use the `http` or `dio` package
+- For local storage: use `shared_preferences` or `sqflite`
+- Run command: `flutter run -d web` (for web preview in browser) or `flutter run` (for mobile)
+- Test command: `flutter analyze` or `flutter test`
+- Install command: `flutter pub get`
+- Flutter web apps can be previewed in the built-in browser panel
 
 ### Port Configuration
 - NEVER use port 5000 (YubiLab backend uses it)
@@ -1417,6 +1435,125 @@ document.getElementById('chat-form').addEventListener('submit', function(e) {
                 with open(app_init, 'w') as f:
                     f.write('')
                 generated.append({'path': f'{app}/__init__.py', 'action': 'create'})
+
+    # --- Flutter/Dart fallback files ---
+    pubspec_path = os.path.join(project_path, 'pubspec.yaml')
+    if language == 'dart' or os.path.isfile(pubspec_path):
+        # Generate pubspec.yaml if missing
+        if not os.path.isfile(pubspec_path):
+            project_name = os.path.basename(project_path).replace('-', '_').replace(' ', '_').lower()
+            pubspec_content = f"""name: {project_name}
+description: A Flutter application built with YubiLab
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+"""
+            with open(pubspec_path, 'w') as f:
+                f.write(pubspec_content)
+            generated.append({'path': 'pubspec.yaml', 'action': 'create'})
+
+        # Generate lib/main.dart if missing
+        lib_dir = os.path.join(project_path, 'lib')
+        main_dart = os.path.join(lib_dir, 'main.dart')
+        if not os.path.isfile(main_dart):
+            os.makedirs(lib_dir, exist_ok=True)
+            project_name = os.path.basename(project_path).replace('-', '_').replace(' ', '_')
+            title = project_name.replace('_', ' ').title()
+            dart_content = f"""import 'package:flutter/material.dart';
+
+void main() {{
+  runApp(const MyApp());
+}}
+
+class MyApp extends StatelessWidget {{
+  const MyApp({{super.key}});
+
+  @override
+  Widget build(BuildContext context) {{
+    return MaterialApp(
+      title: '{title}',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorSchemeSeed: Colors.blue,
+        useMaterial3: true,
+        brightness: Brightness.light,
+      ),
+      darkTheme: ThemeData(
+        colorSchemeSeed: Colors.blue,
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      home: const HomePage(),
+    );
+  }}
+}}
+
+class HomePage extends StatefulWidget {{
+  const HomePage({{super.key}});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}}
+
+class _HomePageState extends State<HomePage> {{
+  @override
+  Widget build(BuildContext context) {{
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('{title}'),
+        centerTitle: true,
+      ),
+      body: const Center(
+        child: Text(
+          'Welcome to {title}!',
+          style: TextStyle(fontSize: 24),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {{
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Hello from Flutter!')),
+          );
+        }},
+        child: const Icon(Icons.add),
+      ),
+    );
+  }}
+}}
+"""
+            with open(main_dart, 'w') as f:
+                f.write(dart_content)
+            generated.append({'path': 'lib/main.dart', 'action': 'create'})
+
+        # Generate analysis_options.yaml if missing
+        analysis_path = os.path.join(project_path, 'analysis_options.yaml')
+        if not os.path.isfile(analysis_path):
+            analysis_content = """include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    avoid_print: false
+"""
+            with open(analysis_path, 'w') as f:
+                f.write(analysis_content)
+            generated.append({'path': 'analysis_options.yaml', 'action': 'create'})
 
     return generated
 

@@ -32,6 +32,8 @@ const LANG_MAP = {
     'rb': 'ruby', 'sh': 'shell', 'bash': 'shell', 'yml': 'yaml', 'yaml': 'yaml',
     'xml': 'xml', 'sql': 'sql', 'txt': 'plaintext', 'toml': 'plaintext',
     'cfg': 'plaintext', 'ini': 'ini', 'dockerfile': 'dockerfile',
+    'dart': 'dart', 'swift': 'swift', 'kt': 'kotlin', 'kts': 'kotlin',
+    'gradle': 'groovy', 'groovy': 'groovy', 'scala': 'scala',
 };
 
 // File type icons
@@ -41,6 +43,8 @@ const FILE_ICONS = {
     'java': '☕', 'go': '🐹', 'rs': '🦀', 'php': '🐘', 'rb': '💎',
     'sh': '📜', 'yml': '⚙️', 'yaml': '⚙️', 'xml': '📄', 'sql': '🗄️',
     'txt': '📄', 'toml': '⚙️', 'gitignore': '📁',
+    'dart': '🎯', 'swift': '🍎', 'kt': '🟣', 'kts': '🟣',
+    'gradle': '🐘', 'scala': '🔴',
 };
 
 // ============================================
