@@ -7,7 +7,8 @@
     <link rel="stylesheet" href="/css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        .docs-body { overflow-y: auto; }
+        html, body.docs-body { overflow-y: auto !important; height: auto !important; min-height: 100vh; }
+        body.docs-body .dashboard-container { overflow-y: auto !important; height: auto !important; min-height: 100vh; }
         .docs-layout { display: flex; max-width: 1200px; margin: 0 auto; padding: 32px; gap: 32px; }
         .docs-sidebar { width: 240px; flex-shrink: 0; position: sticky; top: 32px; align-self: flex-start; }
         .docs-sidebar h4 { color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
@@ -74,6 +75,12 @@
                 <nav class="docs-nav">
                     <a href="#yubiai">YubiAI Assistant</a>
                     <a href="#agent">Autonomous Agent</a>
+                </nav>
+                <h4 style="margin-top:24px;">Mobile</h4>
+                <nav class="docs-nav">
+                    <a href="#flutter">Flutter / Dart</a>
+                    <a href="#flutter-build">Build & Export</a>
+                    <a href="#flutter-download">Download APK</a>
                 </nav>
                 <h4 style="margin-top:24px;">API</h4>
                 <nav class="docs-nav">
@@ -279,7 +286,45 @@
                     <li><strong>Go</strong> - main.go</li>
                     <li><strong>PHP</strong> - index.php</li>
                     <li><strong>Rust</strong> - main.rs</li>
+                    <li><strong>Flutter / Dart</strong> - lib/main.dart, pubspec.yaml, web/index.html</li>
                 </ul>
+
+                <h2 id="flutter">Flutter / Dart</h2>
+                <p>YubiLab supports <strong>Flutter</strong> for building cross-platform apps (Web, Android, iOS) from a single Dart codebase. Flutter SDK 3.24.5 and Android SDK 34 are pre-installed.</p>
+
+                <h3>Creating a Flutter Project</h3>
+                <p>Select <strong>"Flutter / Dart"</strong> when creating a new project. A starter Flutter app is generated with Material Design, including <code>lib/main.dart</code>, <code>pubspec.yaml</code>, and a web template.</p>
+
+                <h3 id="flutter-build">Build & Export</h3>
+                <p>Click the <strong>Build</strong> button in the editor toolbar to access the build menu:</p>
+                <ul>
+                    <li><strong>Build Web App</strong> - Compiles to HTML/JS and auto-deploys to the preview panel. Test your app instantly in the browser.</li>
+                    <li><strong>Build Android APK</strong> - Compiles a release APK for Android devices. Download it when ready.</li>
+                </ul>
+                <div class="code-block"><pre><code># Or use the terminal directly:
+flutter build web      # Build for web
+flutter build apk      # Build Android APK
+flutter test           # Run tests</code></pre></div>
+
+                <h3 id="flutter-download">Download Builds</h3>
+                <p>After building, use the Build menu to download:</p>
+                <ul>
+                    <li><strong>Download APK</strong> - Downloads the compiled <code>.apk</code> file for Android installation</li>
+                    <li><strong>Download Web Build</strong> - Downloads a <code>.zip</code> of the web app for self-hosting</li>
+                </ul>
+                <p>The web build is automatically served in the Preview panel so you can test it live without downloading.</p>
+
+                <h3>Flutter API Endpoints</h3>
+                <div class="table-wrap">
+                    <table class="docs-table">
+                        <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+                        <tbody>
+                            <tr><td><span class="badge badge-green">POST</span></td><td><code>/api/flutter/build/:id</code></td><td>Build web or APK (body: {type: "web"|"apk"})</td></tr>
+                            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/api/flutter/download/:id/:artifact</code></td><td>Download APK or web zip</td></tr>
+                            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/api/flutter/status/:id</code></td><td>Check Flutter project status & available builds</td></tr>
+                        </tbody>
+                    </table>
+                </div>
 
                 <h2 id="shortcuts">Keyboard Shortcuts</h2>
                 <div class="table-wrap">

@@ -37,6 +37,120 @@ LANGUAGE_TEMPLATES = {
     'rust': {
         'main.rs': 'fn main() {\n    println!("Hello, World!");\n}\n',
     },
+    'flutter': {
+        'lib/main.dart': '''import 'package:flutter/material.dart';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'YubiLab Flutter App',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorSchemeSeed: Colors.blue,
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      home: const HomePage(),
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  int _counter = 0;
+
+  void _incrementCounter() {
+    setState(() {
+      _counter++;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('YubiLab Flutter App'),
+        centerTitle: true,
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('You have pushed the button this many times:'),
+            Text(
+              '$_counter',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _incrementCounter,
+        tooltip: 'Increment',
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+''',
+        'pubspec.yaml': '''name: yubilab_app
+description: A Flutter app built with YubiLab.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+''',
+        'web/index.html': '''<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A Flutter app built with YubiLab">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="YubiLab App">
+  <link rel="manifest" href="manifest.json">
+  <title>YubiLab Flutter App</title>
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
+''',
+        'web/manifest.json': '''{\n    "name": "YubiLab Flutter App",\n    "short_name": "YubiLab",\n    "start_url": ".",\n    "display": "standalone",\n    "background_color": "#0d1117",\n    "theme_color": "#58a6ff",\n    "description": "A Flutter app built with YubiLab",\n    "orientation": "portrait-primary",\n    "prefer_related_applications": false\n}\n''',
+        'analysis_options.yaml': 'include: package:flutter_lints/flutter.yaml\n',
+        '.metadata': '''# This file tracks properties of this Flutter project.
+project_type: app
+''',
+    },
 }
 
 
@@ -109,6 +223,8 @@ def create_project(user):
     templates = LANGUAGE_TEMPLATES.get(language, LANGUAGE_TEMPLATES['python'])
     for filename, content in templates.items():
         filepath = os.path.join(project_path, filename)
+        # Create subdirectories if needed (e.g. lib/main.dart, web/index.html)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w') as f:
             f.write(content)
 
