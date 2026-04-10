@@ -9,7 +9,7 @@ from models import init_db
 from auth import auth_bp
 from projects import projects_bp
 from files import files_bp
-from ai import ai_bp
+from ai import ai_bp, start_keepalive
 from keys import keys_bp
 from deploy import deploy_bp
 from tools import tools_bp
@@ -222,4 +222,6 @@ def health():
 
 if __name__ == '__main__':
     print("Starting YubiLab Flask Backend on port 5000...")
+    # Start background keepalive thread to prevent YubiAI Render server from sleeping
+    start_keepalive()
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

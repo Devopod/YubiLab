@@ -7,6 +7,7 @@ import json
 import subprocess
 import time
 import re
+import threading
 from config import WORKSPACES_DIR, YUBIAI_API_URL, YUBIAI_API_KEY
 
 ai_bp = Blueprint('ai', __name__)
@@ -20,6 +21,39 @@ def get_project_path(user_id, project_name):
 # Track API warm status to avoid redundant pre-warm calls
 _api_warm = False
 _api_warm_time = 0
+_keepalive_thread = None
+
+
+def _keepalive_loop():
+    """Background thread that pings YubiAI every 4 minutes to prevent Render from sleeping."""
+    global _api_warm, _api_warm_time
+    while True:
+        time.sleep(240)  # 4 minutes
+        if not YUBIAI_API_URL or not YUBIAI_API_KEY:
+            continue
+        try:
+            resp = requests.post(
+                YUBIAI_API_URL,
+                headers={
+                    "Authorization": f"Bearer {YUBIAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={"message": "keepalive", "model": "gpt-oss-120b", "max_tokens": 5},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                _api_warm = True
+                _api_warm_time = time.time()
+        except Exception:
+            _api_warm = False
+
+
+def start_keepalive():
+    """Start the background keepalive thread (called once on app startup)."""
+    global _keepalive_thread
+    if _keepalive_thread is None or not _keepalive_thread.is_alive():
+        _keepalive_thread = threading.Thread(target=_keepalive_loop, daemon=True)
+        _keepalive_thread.start()
 
 
 def prewarm_api():
@@ -32,8 +66,8 @@ def prewarm_api():
         return True
     if not YUBIAI_API_URL or not YUBIAI_API_KEY:
         return False
-    # Try a lightweight request to wake the server
-    for attempt in range(6):  # 6 attempts over ~60s
+    # Try a lightweight request to wake the server — up to 12 attempts over ~2 minutes
+    for attempt in range(12):
         try:
             resp = requests.post(
                 YUBIAI_API_URL,
@@ -47,20 +81,23 @@ def prewarm_api():
             if resp.status_code == 200:
                 _api_warm = True
                 _api_warm_time = time.time()
+                # Start keepalive thread after first successful warm
+                start_keepalive()
                 return True
             if resp.status_code in (401, 403):
                 return False  # Auth issue, no point retrying
         except Exception:
             pass
-        if attempt < 5:
-            time.sleep([5, 8, 10, 12, 15][min(attempt, 4)])
+        if attempt < 11:
+            time.sleep([5, 8, 10, 12, 15, 15, 15, 15, 15, 15, 15][min(attempt, 10)])
     return False
 
 
-def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=10):
-    """Call YubiAI API with automatic retry, pre-warming, and aggressive backoff.
+def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0.7, max_tokens=4096, retries=20):
+    """Call YubiAI API with automatic retry, pre-warming, aggressive backoff, and keepalive.
     Render free tier sleeps after inactivity and takes 30-90s to wake up.
-    Pre-warms API on first call, then uses aggressive retry schedule."""
+    Uses 20 retries with escalating backoff to cover even the slowest cold starts (~3 min).
+    Background keepalive thread prevents future sleep cycles."""
     global _api_warm, _api_warm_time
     if not YUBIAI_API_KEY:
         return {"error": "YubiAI API key not configured. Set YUBIAI_API_KEY environment variable."}
@@ -96,6 +133,7 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
             if resp.status_code == 200:
                 _api_warm = True
                 _api_warm_time = time.time()
+                start_keepalive()  # Ensure keepalive is running after success
                 return resp.json()
             error_text = resp.text
             if 'ngrok' in error_text.lower() or 'offline' in error_text.lower():
@@ -105,31 +143,32 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
             elif resp.status_code == 403:
                 # 403 can be transient on Render — retry a few times before giving up
                 last_error = "YubiAI API returned 403 Forbidden — retrying..."
-                if attempt >= 3:
+                if attempt >= 5:
                     return {"error": "YubiAI API returned 403 Forbidden. Check your API key or server status."}
             elif resp.status_code == 429:
-                last_error = "YubiAI API rate limit exceeded."
+                last_error = "YubiAI API rate limit exceeded — retrying..."
             elif resp.status_code == 404:
                 last_error = "YubiAI API endpoint not found (404)."
             elif resp.status_code == 503:
-                last_error = "YubiAI server is waking up (503). Free-tier servers sleep after inactivity — retrying..."
-                _api_warm = False  # Mark as not warm so next call pre-warms again
+                last_error = "YubiAI server is waking up (503). Retrying automatically..."
+                _api_warm = False
             elif resp.status_code == 502:
                 last_error = "YubiAI server returned 502 Bad Gateway — retrying..."
                 _api_warm = False
             else:
                 last_error = f"YubiAI API returned HTTP {resp.status_code}."
         except requests.exceptions.ConnectionError:
-            last_error = "Cannot connect to YubiAI API. The server may be waking up — retrying..."
+            last_error = "Cannot connect to YubiAI API — retrying..."
             _api_warm = False
         except requests.exceptions.Timeout:
-            last_error = "YubiAI API request timed out (180s)."
+            last_error = "YubiAI API request timed out (180s) — retrying..."
         except Exception as e:
             last_error = f"YubiAI API error: {str(e)}"
 
-        # Aggressive backoff: 5, 8, 12, 15, 20, 25, 30, 30, 30s — covers Render cold starts up to ~120s
+        # Escalating backoff: covers Render cold starts up to ~3+ minutes
+        # 3,5,8,10,12,15,15,15,15,15,15,15,15,15,15,15,15,15,15s = ~230s total wait
         if attempt < retries - 1:
-            backoff_schedule = [5, 8, 12, 15, 20, 25, 30, 30, 30]
+            backoff_schedule = [3, 5, 8, 10, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15]
             wait_secs = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
             time.sleep(wait_secs)
 

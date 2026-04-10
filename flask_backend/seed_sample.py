@@ -2969,9 +2969,9 @@ def seed_sample_project(user_id):
             'files': CHATBOT_FILES,
         },
         {
-            'name': 'flutter-music-player',
+            'name': 'MyMusic.apk',
             'language': 'flutter',
-            'description': 'A beautiful Music Player app built with Flutter & Material Design 3. Features playlist management, search, favorites, and now-playing UI.',
+            'description': 'MyMusic — A beautiful Music Player app built with Flutter & Material Design 3. Features playlist management, search, favorites, and now-playing UI.',
             'files': FLUTTER_MUSIC_PLAYER_FILES,
         },
     ]
