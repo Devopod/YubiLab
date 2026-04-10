@@ -2,7 +2,8 @@
 // Uses XMLHttpRequest instead of fetch to work around browser security restriction
 // that blocks fetch() when the page URL contains basic-auth credentials (user:pass@host)
 
-function apiFetch(url, options = {}) {
+// Internal single-attempt XHR call
+function _apiFetchOnce(url, options = {}) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         const method = (options.method || 'GET').toUpperCase();
@@ -19,6 +20,17 @@ function apiFetch(url, options = {}) {
         xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
 
         xhr.onload = function () {
+            // Detect ngrok/proxy 502/503/504 errors (they return HTML, not JSON)
+            // These are tunnel-level errors, NOT backend errors
+            const isGatewayError = xhr.status === 502 || xhr.status === 503 || xhr.status === 504;
+            const text = xhr.responseText || '';
+            const isHtmlError = text.includes('<!DOCTYPE') || text.includes('<html');
+            if (isGatewayError || (isHtmlError && xhr.status !== 200)) {
+                // Signal this as a retryable gateway error
+                reject({ retryable: true, status: xhr.status, text: text });
+                return;
+            }
+
             const response = {
                 ok: xhr.status >= 200 && xhr.status < 300,
                 status: xhr.status,
@@ -31,25 +43,19 @@ function apiFetch(url, options = {}) {
                     try {
                         return Promise.resolve(JSON.parse(xhr.responseText));
                     } catch (e) {
-                        // Detect specific error scenarios for better messages
                         const text = xhr.responseText || '';
                         let errorMsg = 'Server returned an invalid response';
-
                         if (xhr.status === 0) {
                             errorMsg = 'Cannot connect to server. Please check if the backend is running.';
-                        } else if (xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
-                            errorMsg = 'Server is temporarily unavailable. Please try again in a moment.';
                         } else if (xhr.status === 401) {
                             errorMsg = 'Session expired. Please log in again.';
                         } else if (text.includes('ngrok') && (text.includes('<!DOCTYPE') || text.includes('<html'))) {
-                            // Ngrok interstitial page — retry silently
                             errorMsg = 'Connecting to server... Please try again.';
                         } else if (text.includes('<!DOCTYPE') || text.includes('<html')) {
                             errorMsg = 'Backend server returned unexpected HTML. It may be restarting.';
                         } else if (text.length === 0) {
                             errorMsg = 'Server returned an empty response.';
                         }
-
                         return Promise.reject(new SyntaxError(errorMsg));
                     }
                 },
@@ -58,7 +64,7 @@ function apiFetch(url, options = {}) {
         };
 
         xhr.onerror = function () {
-            reject(new TypeError('Cannot connect to server. Please check your connection and try again.'));
+            reject({ retryable: true, status: 0, text: 'Connection error' });
         };
 
         xhr.ontimeout = function () {
@@ -67,6 +73,33 @@ function apiFetch(url, options = {}) {
 
         xhr.send(options.body || null);
     });
+}
+
+// apiFetch with automatic retry on gateway/tunnel errors (502, 503, 504, connection errors)
+// Ngrok free tier often returns 502/503 HTML when upstream is slow — this retries transparently
+async function apiFetch(url, options = {}) {
+    const maxRetries = options.maxRetries || 5;
+    const retryDelay = options.retryDelay || 3000;  // 3 seconds between retries
+    let lastError = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            return await _apiFetchOnce(url, options);
+        } catch (e) {
+            if (e && e.retryable && attempt < maxRetries - 1) {
+                lastError = e;
+                console.warn(`[apiFetch] Gateway error (${e.status}), retrying in ${retryDelay/1000}s... (attempt ${attempt + 1}/${maxRetries})`);
+                await new Promise(r => setTimeout(r, retryDelay));
+                continue;
+            }
+            // Non-retryable or exhausted retries
+            if (e && e.retryable) {
+                throw new TypeError('Server is temporarily unavailable after multiple retries. Please try again.');
+            }
+            throw e;
+        }
+    }
+    throw new TypeError('Server is temporarily unavailable. Please try again.');
 }
 
 // High-level API request helper (used by tools.js)
