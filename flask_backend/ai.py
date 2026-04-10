@@ -213,6 +213,12 @@ def execute_test_command(project_path, command, timeout=30):
     env['PORT'] = '3099'
     env['FLASK_RUN_PORT'] = '3099'
     env['PYTHONDONTWRITEBYTECODE'] = '1'
+    # Add Flutter/Android SDK to PATH so flutter commands work
+    flutter_bin = os.path.expanduser('~/flutter/bin')
+    android_tools = os.path.expanduser('~/android-sdk/cmdline-tools/latest/bin')
+    android_platform = os.path.expanduser('~/android-sdk/platform-tools')
+    env['PATH'] = f"{flutter_bin}:{android_tools}:{android_platform}:{env.get('PATH', '')}"
+    env['ANDROID_HOME'] = os.path.expanduser('~/android-sdk')
 
     try:
         result = subprocess.run(
@@ -394,22 +400,35 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - Use SQLite as default database (db.sqlite3)
 - For port: use os.environ.get('PORT', '3002') — NEVER 5000 or 3001
 
-### Flutter/Dart (Mobile App Development)
-- For Flutter projects: generate pubspec.yaml, lib/main.dart, lib/screens/, lib/widgets/, lib/models/, lib/services/
+### Flutter/Dart (Mobile App Development) — CRITICAL
+When the project language is "flutter" or "dart", you MUST ONLY generate Flutter/Dart project files.
+**NEVER generate** CSS files, JavaScript files, HTML templates, requirements.txt, run.py, or any Python/Node/web files for Flutter projects.
+**Flutter project structure:**
+- `pubspec.yaml` — REQUIRED: Flutter dependencies (flutter SDK, cupertino_icons, etc.)
+- `lib/main.dart` — REQUIRED: App entry point with MaterialApp
+- `lib/screens/` — Screen widgets (home_screen.dart, settings_screen.dart, etc.)
+- `lib/widgets/` — Reusable widgets (custom_button.dart, etc.)
+- `lib/models/` — Data models (user.dart, etc.)
+- `lib/services/` — API/data services (api_service.dart, etc.)
+- `web/index.html` — Web template (auto-generated, minimal)
+- `web/manifest.json` — Web app manifest
+- `analysis_options.yaml` — Lint rules
+- `.metadata` — Flutter project metadata
+- `android/app/src/main/AndroidManifest.xml` — Android permissions (if needed)
+- `ios/Runner/Info.plist` — iOS permissions (if needed)
+**DO NOT include:** requirements.txt, run.py, main.py, app/__init__.py, static/css/, static/js/, templates/, package.json, or any non-Dart files
 - Use Material Design 3 (Material You) with ThemeData and ColorScheme
-- Always include proper pubspec.yaml with flutter SDK constraint and dependencies
 - Use StatelessWidget and StatefulWidget appropriately
 - For state management: use Provider, Riverpod, or setState for simple apps
-- Include proper AndroidManifest.xml permissions if needed (internet, camera, etc.)
-- Include proper Info.plist permissions for iOS if needed
 - For navigation: use Navigator 2.0 or go_router for complex routing
 - Always include `flutter: sdk: flutter` in pubspec.yaml dependencies
 - For HTTP requests: use the `http` or `dio` package
 - For local storage: use `shared_preferences` or `sqflite`
-- Run command: `flutter run -d web` (for web preview in browser) or `flutter run` (for mobile)
-- Test command: `flutter analyze` or `flutter test`
+- Run command: `flutter run -d web --web-port 3002 --web-hostname 0.0.0.0`
+- Test command: `flutter analyze`
 - Install command: `flutter pub get`
 - Flutter web apps can be previewed in the built-in browser panel
+- ALL UI is built with Flutter widgets — NOT with HTML/CSS/JS
 
 ### Port Configuration
 - NEVER use port 5000 (YubiLab backend uses it)
@@ -1838,8 +1857,18 @@ IMPORTANT: Only modify files that need fixing. Do NOT regenerate files that are 
         # Phase 1: Plan only — get file groups
         step_start = time.time()
         live_log.append({'icon': '\U0001f9e0', 'message': 'Now planning project architecture — analyzing requirements and dependencies...', 'type': 'plan'})
+        # Add Flutter-specific planning context
+        flutter_plan_ctx = ''
+        if project['language'] == 'flutter':
+            flutter_plan_ctx = """\nCRITICAL: This is a FLUTTER/DART project. Only plan Flutter/Dart files.
+DO NOT plan: CSS, JS, HTML templates, requirements.txt, run.py, app/__init__.py, static/, templates/, package.json.
+ONLY plan: pubspec.yaml, lib/*.dart (main.dart, screens/, widgets/, models/, services/), web/index.html, web/manifest.json, analysis_options.yaml.
+Run command: flutter run -d web --web-port 3002 --web-hostname 0.0.0.0
+Install command: flutter pub get
+Test command: flutter analyze"""
+
         plan_prompt = f"""Project: {project['name']} (Language: {project['language']})
-Project directory: {', '.join(file_list) if file_list else '(empty)'}
+Project directory: {', '.join(file_list) if file_list else '(empty)'}{flutter_plan_ctx}
 
 User request: {prompt}
 
@@ -1899,11 +1928,16 @@ Plan this project. List ALL files needed, grouped into logical batches. Do NOT w
                 if all_files:
                     existing_files_ctx, _ = get_project_files_context(project_path, max_file_size=3000)
 
+                # Add Flutter-specific batch context
+                flutter_batch_ctx = ''
+                if project['language'] == 'flutter':
+                    flutter_batch_ctx = '\nCRITICAL: This is a FLUTTER project. Generate ONLY Dart/Flutter files. NO CSS, JS, HTML templates, requirements.txt, or Python files. ALL UI uses Flutter widgets.'
+
                 batch_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Full project plan: {json.dumps(roadmap)}
 All planned files: {json.dumps([f for g in file_groups for f in g.get('files', [])])}
 
-{'Already generated files (for import references):' + chr(10) + existing_files_ctx if existing_files_ctx else ''}
+{'Already generated files (for import references):' + chr(10) + existing_files_ctx if existing_files_ctx else ''}{flutter_batch_ctx}
 
 User request: {prompt}
 
@@ -1943,11 +1977,22 @@ Generate each file with full, production-ready code. Make sure imports reference
     if not error_context and not (is_large and all_files):
         step_start = time.time()
         live_log.append({'icon': '\U0001f680', 'message': 'Now generating complete project in single request...', 'type': 'generate'})
+        # Add Flutter-specific context to strongly enforce Flutter-only output
+        flutter_context = ''
+        if project['language'] == 'flutter':
+            flutter_context = """\n\nCRITICAL: This is a FLUTTER/DART project. You MUST ONLY generate Flutter/Dart files.
+DO NOT generate: CSS files, JavaScript files, HTML template files, requirements.txt, run.py, main.py, app/__init__.py, static/ folder, templates/ folder, package.json, or ANY Python/Node/web framework files.
+ONLY generate: pubspec.yaml, lib/*.dart files (main.dart, screens/, widgets/, models/, services/), web/index.html (minimal Flutter web template), web/manifest.json, analysis_options.yaml.
+ALL UI must be built with Flutter widgets (Scaffold, AppBar, Column, Row, Container, Text, ElevatedButton, etc.) — NOT with HTML/CSS/JS.
+Run command: flutter run -d web --web-port 3002 --web-hostname 0.0.0.0
+Install command: flutter pub get
+Test command: flutter analyze"""
+
         full_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Project directory: {', '.join(file_list) if file_list else '(empty)'}
 
 Current project files:
-{files_context if files_context else '(empty project)'}
+{files_context if files_context else '(empty project)'}{flutter_context}
 
 User request: {prompt}"""
 
@@ -1985,7 +2030,162 @@ User request: {prompt}"""
                  f'{len(created_files)} files written' + (f', {len(errors)} errors' if errors else ''),
                  time.time() - step_start)
 
-    # === FALLBACK FILE GENERATION ===
+    # === FLUTTER-SPECIFIC POST-BUILD CLEANUP ===
+    # Remove non-Flutter files (CSS, JS, HTML templates, requirements.txt, run.py) from Flutter projects
+    if all_files and project['language'] == 'flutter':
+        step_start = time.time()
+        flutter_cleanup = []
+        non_flutter_patterns = [
+            'requirements.txt', 'run.py', 'main.py', 'Procfile', 'package.json', 'package-lock.json',
+        ]
+        non_flutter_dirs = ['app', 'static', 'templates', 'node_modules', '__pycache__']
+        non_flutter_extensions = ['.css', '.html', '.jsx', '.tsx']
+        # Only remove files that are clearly non-Flutter and were just generated (not user files)
+        new_file_paths = set(f.get('path', '') for f in all_files if isinstance(f, dict))
+        for fpath in new_file_paths:
+            # Skip Flutter-specific web files
+            if fpath.startswith('web/') or fpath.startswith('lib/') or fpath in ('pubspec.yaml', 'analysis_options.yaml', '.metadata'):
+                continue
+            # Remove non-Flutter files that were generated by mistake
+            base_name = os.path.basename(fpath)
+            _, ext = os.path.splitext(fpath)
+            is_non_flutter = (
+                base_name in non_flutter_patterns or
+                any(fpath.startswith(d + '/') for d in non_flutter_dirs) or
+                (ext in non_flutter_extensions and not fpath.startswith('web/'))
+            )
+            if is_non_flutter:
+                full = os.path.join(project_path, fpath)
+                if os.path.exists(full):
+                    os.remove(full)
+                    flutter_cleanup.append(fpath)
+        if flutter_cleanup:
+            cleanup_names = ', '.join(flutter_cleanup[:5])
+            live_log.append({'icon': '🧹', 'message': f'Cleaned up {len(flutter_cleanup)} non-Flutter files: {cleanup_names}', 'type': 'fix'})
+            add_step('Cleaning non-Flutter files', 'done', f'Removed {len(flutter_cleanup)} files', time.time() - step_start)
+
+        # Set Flutter-specific commands if not already set
+        if not run_command:
+            run_command = 'flutter run -d web --web-port 3002 --web-hostname 0.0.0.0'
+        if not install_cmd:
+            install_cmd = 'flutter pub get'
+        if not test_cmd:
+            test_cmd = 'flutter analyze'
+
+        # Generate Flutter fallback files if missing
+        pubspec_path = os.path.join(project_path, 'pubspec.yaml')
+        main_dart_path = os.path.join(project_path, 'lib', 'main.dart')
+        if not os.path.isfile(pubspec_path):
+            os.makedirs(project_path, exist_ok=True)
+            with open(pubspec_path, 'w') as f:
+                f.write("""name: yubilab_app
+description: A Flutter app built with YubiLab.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+""")
+            all_files.append({'path': 'pubspec.yaml', 'action': 'create'})
+            live_log.append({'icon': '📄', 'message': 'Auto-generated missing pubspec.yaml', 'type': 'fix'})
+        if not os.path.isfile(main_dart_path):
+            os.makedirs(os.path.join(project_path, 'lib'), exist_ok=True)
+            dart_code = (
+                "import 'package:flutter/material.dart';\n\n"
+                "void main() {\n  runApp(const MyApp());\n}\n\n"
+                "class MyApp extends StatelessWidget {\n"
+                "  const MyApp({super.key});\n\n"
+                "  @override\n"
+                "  Widget build(BuildContext context) {\n"
+                "    return MaterialApp(\n"
+                "      title: 'YubiLab Flutter App',\n"
+                "      debugShowCheckedModeBanner: false,\n"
+                "      theme: ThemeData(\n"
+                "        colorSchemeSeed: Colors.blue,\n"
+                "        useMaterial3: true,\n"
+                "        brightness: Brightness.dark,\n"
+                "      ),\n"
+                "      home: const HomePage(),\n"
+                "    );\n  }\n}\n\n"
+                "class HomePage extends StatefulWidget {\n"
+                "  const HomePage({super.key});\n\n"
+                "  @override\n"
+                "  State<HomePage> createState() => _HomePageState();\n"
+                "}\n\n"
+                "class _HomePageState extends State<HomePage> {\n"
+                "  int _counter = 0;\n\n"
+                "  void _incrementCounter() {\n"
+                "    setState(() {\n      _counter++;\n    });\n  }\n\n"
+                "  @override\n"
+                "  Widget build(BuildContext context) {\n"
+                "    return Scaffold(\n"
+                "      appBar: AppBar(\n"
+                "        title: const Text('YubiLab Flutter App'),\n"
+                "        centerTitle: true,\n"
+                "      ),\n"
+                "      body: Center(\n"
+                "        child: Column(\n"
+                "          mainAxisAlignment: MainAxisAlignment.center,\n"
+                "          children: [\n"
+                "            const Text('You have pushed the button this many times:'),\n"
+                "            Text(\n"
+                "              '$_counter',\n"
+                "              style: Theme.of(context).textTheme.headlineMedium,\n"
+                "            ),\n"
+                "          ],\n"
+                "        ),\n"
+                "      ),\n"
+                "      floatingActionButton: FloatingActionButton(\n"
+                "        onPressed: _incrementCounter,\n"
+                "        tooltip: 'Increment',\n"
+                "        child: const Icon(Icons.add),\n"
+                "      ),\n"
+                "    );\n  }\n}\n"
+            )
+            with open(main_dart_path, 'w') as f:
+                f.write(dart_code)
+            all_files.append({'path': 'lib/main.dart', 'action': 'create'})
+            live_log.append({'icon': '📄', 'message': 'Auto-generated missing lib/main.dart', 'type': 'fix'})
+        # Generate web/index.html if missing
+        web_index_path = os.path.join(project_path, 'web', 'index.html')
+        if not os.path.isfile(web_index_path):
+            os.makedirs(os.path.join(project_path, 'web'), exist_ok=True)
+            with open(web_index_path, 'w') as f:
+                f.write("""<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta name="description" content="A Flutter app built with YubiLab">
+  <title>YubiLab Flutter App</title>
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
+""")
+            all_files.append({'path': 'web/index.html', 'action': 'create'})
+        # Generate analysis_options.yaml if missing
+        analysis_path = os.path.join(project_path, 'analysis_options.yaml')
+        if not os.path.isfile(analysis_path):
+            with open(analysis_path, 'w') as f:
+                f.write('include: package:flutter_lints/flutter.yaml\n')
+            all_files.append({'path': 'analysis_options.yaml', 'action': 'create'})
+
+    # === FALLBACK FILE GENERATION (Python projects only) ===
     # When API fails mid-build, auto-generate missing critical files
     if all_files and project['language'] == 'python':
         live_log.append({'icon': '🔧', 'message': 'Now checking for missing critical files...', 'type': 'info'})
@@ -2022,7 +2222,8 @@ User request: {prompt}"""
     # === POST-BUILD SANITIZATION PASS ===
     # Scan ALL files on disk and fix common AI-generated issues
     # ({% raw %}, bare csrf_token, PRAGMA spam, index route, main.py conflict)
-    if all_files:
+    # Skip sanitization for Flutter projects — they don't have Jinja/Flask files
+    if all_files and project['language'] != 'flutter':
         step_start = time.time()
         sanitized = sanitize_project_on_disk(project_path)
         if sanitized:
@@ -2235,7 +2436,7 @@ Fix this error. Only modify the files that have the bug. Do NOT rewrite everythi
     test_actions = []  # List of test actions for UI display
     test_issues = []   # Issues found during testing
 
-    if final_test_passed and run_command and all_files and project['language'] == 'python':
+    if final_test_passed and run_command and all_files and project['language'] in ('python',):
         step_start = time.time()
         smoke_port = 3099
         smoke_proc = None
