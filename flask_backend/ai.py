@@ -373,7 +373,8 @@ You MUST respond with ONLY a valid JSON object. No markdown, no explanation outs
 - For database initialization: call `db.create_all()` inside create_app() AFTER registering blueprints so models are imported
 - In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year or inject it via context processor.
 - In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this prevents ALL template tags from working (url_for, csrf_token, extends, block, etc.)
-- For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — NEVER use bare {{ csrf_token() }} without the hidden input wrapper
+- For CSRF: ALWAYS set `app.config['WTF_CSRF_ENABLED'] = False` in create_app() BEFORE calling csrf.init_app(app). YubiLab runs apps behind a proxy that breaks session cookies, making CSRF tokens fail. Still import CSRFProtect and call csrf.init_app(app) for compatibility, but disable the check.
+- For CSRF in forms: Still include <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> in forms for good practice, but the check is disabled.
 - For the index route (/): ALWAYS redirect to login page if user is not authenticated, redirect to main app page if authenticated. NEVER just render base.html as the index.
 - Do NOT create a separate main.py with a simple hello-world app. Use run.py with create_app() factory pattern.
 - For login/signup forms: Let forms submit normally via HTML form action (method="POST"). Do NOT generate separate auth.js that intercepts form submission with fetch() — this breaks CSRF and prevents normal form POST from working. If you must use JS, make sure it handles CSRF tokens and form data correctly.
@@ -474,10 +475,10 @@ RULES:
 - Always include `import os` in run.py when using os.environ
 - In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist. Use a hardcoded year instead.
 - In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this prevents ALL template tags from working
-- For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — never bare {{ csrf_token() }}
+- For CSRF: ALWAYS set `app.config['WTF_CSRF_ENABLED'] = False` in create_app() before csrf.init_app(app). The proxy breaks session cookies.
 - The index route (/) should redirect to login if not authenticated, not just render base.html
 - Do NOT create a separate main.py stub — use run.py with create_app() factory
-- For login/signup forms: Let forms POST normally via HTML action. Do NOT generate auth.js that intercepts submission with fetch() — it breaks CSRF"""
+- For login/signup forms: Let forms POST normally via HTML action. Do NOT generate auth.js that intercepts submission with fetch()"""
 
 
 # Batch generation prompt for multi-request agent
@@ -511,11 +512,11 @@ RULES:
 - NEVER import Markup from flask — use `from markupsafe import Markup`
 - In Jinja2 templates: NEVER use {{ now().year }} — it doesn't exist in Jinja2. Use a hardcoded year instead.
 - In Jinja2 templates: NEVER wrap templates in {%% raw %%}...{%% endraw %%} — this makes ALL Jinja2 tags render as literal text
-- For CSRF in forms: Always use <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> — never bare {{ csrf_token() }}
+- For CSRF: ALWAYS set `app.config['WTF_CSRF_ENABLED'] = False` in create_app() before csrf.init_app(app). The proxy breaks session cookies.
 - The index route (/) should redirect to login if not authenticated
 - Do NOT create a separate main.py hello-world stub — use run.py with create_app() factory
 - For requirements.txt: do NOT pin Werkzeug, Flask, or Jinja2 to specific versions — just list the package name without == to avoid conflicts
-- For login/signup forms: Let forms POST normally via HTML action. Do NOT generate auth.js that intercepts submission with fetch() — it breaks CSRF"""
+- For login/signup forms: Let forms POST normally via HTML action. Do NOT generate auth.js that intercepts submission with fetch()"""
 
 
 @ai_bp.route('/api/ai/conversations/<int:project_id>', methods=['GET'])
@@ -847,6 +848,27 @@ def sanitize_flask_code(content, file_path):
                 'from flask import Blueprint, render_template, redirect, url_for',
                 content
             )
+
+    # === FIX: Disable CSRF in generated Flask apps ===
+    # CSRF tokens break when apps run behind YubiLab's proxy (session cookies don't survive the proxy chain).
+    # For demo/development projects, disable CSRF entirely to avoid "CSRF session token is missing" errors.
+    basename = os.path.basename(file_path).lower()
+    if basename == '__init__.py' and 'CSRFProtect' in content:
+        # Add WTF_CSRF_ENABLED = False to app config after csrf.init_app(app)
+        if 'csrf.init_app(app)' in content and 'WTF_CSRF_ENABLED' not in content:
+            content = content.replace(
+                'csrf.init_app(app)',
+                "app.config['WTF_CSRF_ENABLED'] = False  # Disabled: proxy breaks session cookies\n    csrf.init_app(app)"
+            )
+        # Also handle case where CSRFProtect() is called but not init_app
+        elif 'CSRFProtect(app)' in content and 'WTF_CSRF_ENABLED' not in content:
+            content = content.replace(
+                'CSRFProtect(app)',
+                "app.config['WTF_CSRF_ENABLED'] = False  # Disabled: proxy breaks session cookies\n    CSRFProtect(app)"
+            )
+    if basename == 'config.py' and 'WTF_CSRF_ENABLED' in content:
+        # Ensure CSRF is disabled in config
+        content = re.sub(r'WTF_CSRF_ENABLED\s*[:=]\s*(?:bool\s*=\s*)?True', 'WTF_CSRF_ENABLED = False', content)
 
     # Fix db.create_all() before models are imported — ensure models import comes before create_all
     if 'def create_app' in content and 'db.create_all()' in content:
@@ -1444,7 +1466,7 @@ def sanitize_project_on_disk(project_path):
         except Exception:
             pass
 
-    # Ensure ALL forms in templates have CSRF token
+    # Ensure ALL forms in templates have CSRF token (for good practice even though CSRF is disabled)
     templates_dir = os.path.join(project_path, 'app', 'templates')
     if os.path.isdir(templates_dir):
         for root, _, files in os.walk(templates_dir):
@@ -1470,6 +1492,27 @@ def sanitize_project_on_disk(project_path):
                         fixed_files.append(os.path.relpath(fpath, project_path))
                 except Exception:
                     pass
+
+    # Disable CSRF in config.py if it's set to True (proxy breaks session cookies)
+    for cfg_name in ('config.py', 'settings.py'):
+        cfg_path = os.path.join(project_path, cfg_name)
+        if os.path.isfile(cfg_path):
+            try:
+                with open(cfg_path, 'r') as f:
+                    cfg_content = f.read()
+                original_cfg = cfg_content
+                if 'WTF_CSRF_ENABLED' in cfg_content:
+                    cfg_content = re.sub(
+                        r'WTF_CSRF_ENABLED\s*[:=]\s*(?:bool\s*=\s*)?True',
+                        'WTF_CSRF_ENABLED = False  # Disabled: proxy breaks session cookies',
+                        cfg_content
+                    )
+                if cfg_content != original_cfg:
+                    with open(cfg_path, 'w') as f:
+                        f.write(cfg_content)
+                    fixed_files.append(cfg_name)
+            except Exception:
+                pass
 
     return fixed_files
 
