@@ -26,10 +26,10 @@ _keepalive_thread = None
 
 
 def _keepalive_loop():
-    """Background thread that pings YubiAI every 4 minutes to prevent Render from sleeping."""
+    """Background thread that pings YubiAI every 2 minutes to prevent Render from sleeping."""
     global _api_warm, _api_warm_time
     while True:
-        time.sleep(240)  # 4 minutes
+        time.sleep(120)  # 2 minutes — Render free tier sleeps fast
         if not YUBIAI_API_URL or not YUBIAI_API_KEY:
             continue
         try:
@@ -62,8 +62,8 @@ def prewarm_api():
     Render free tier sleeps after inactivity — this wakes it up before the real request.
     Returns True if API is responsive, False otherwise."""
     global _api_warm, _api_warm_time
-    # Skip if already warmed within last 5 minutes
-    if _api_warm and (time.time() - _api_warm_time) < 300:
+    # Skip if already warmed within last 90 seconds (Render sleeps fast on free tier)
+    if _api_warm and (time.time() - _api_warm_time) < 90:
         return True
     if not YUBIAI_API_URL or not YUBIAI_API_KEY:
         return False
@@ -105,8 +105,8 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
     if not YUBIAI_API_URL:
         return {"error": "YubiAI API URL not configured. Set YUBIAI_API_URL environment variable."}
 
-    # Pre-warm API if not already warm (handles Render cold starts)
-    if not _api_warm or (time.time() - _api_warm_time) > 300:
+    # Pre-warm API if not already warm (Render free tier sleeps after ~90s inactivity)
+    if not _api_warm or (time.time() - _api_warm_time) > 90:
         prewarm_api()
 
     payload = {
@@ -166,8 +166,12 @@ def call_yubiai(message, system_prompt=None, model="gpt-oss-120b", temperature=0
         except Exception as e:
             last_error = f"YubiAI API error: {str(e)}"
 
+        # On 503/502/connection error after 3 failed attempts, force a full pre-warm cycle
+        # This breaks the pattern of blindly retrying against a sleeping server
+        if attempt == 2 and not _api_warm:
+            prewarm_api()
+
         # Escalating backoff: covers Render cold starts up to ~3+ minutes
-        # 3,5,8,10,12,15,15,15,15,15,15,15,15,15,15,15,15,15,15s = ~230s total wait
         if attempt < retries - 1:
             backoff_schedule = [3, 5, 8, 10, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15]
             wait_secs = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
@@ -1015,7 +1019,7 @@ def ai_generate(user):
     model = 'llama-3.3-70b-versatile' if is_simple else 'gpt-oss-120b'
     max_tokens = 4096 if is_simple else 8192
 
-    result = call_yubiai(full_prompt, system_prompt=system_prompt, model=model, max_tokens=max_tokens, retries=5)
+    result = call_yubiai(full_prompt, system_prompt=system_prompt, model=model, max_tokens=max_tokens, retries=15)
 
     if 'error' in result:
         return jsonify({'error': result['error'], 'action': action}), 500
