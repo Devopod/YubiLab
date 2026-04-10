@@ -39,74 +39,6 @@ LANGUAGE_TEMPLATES = {
         'main.rs': 'fn main() {\n    println!("Hello, World!");\n}\n',
     },
     'flutter': {
-        'lib/main.dart': '''import 'package:flutter/material.dart';
-
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'YubiLab Flutter App',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: Colors.blue,
-        useMaterial3: true,
-        brightness: Brightness.dark,
-      ),
-      home: const HomePage(),
-    );
-  }
-}
-
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      _counter++;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('YubiLab Flutter App'),
-        centerTitle: true,
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
-    );
-  }
-}
-''',
         'pubspec.yaml': '''name: yubilab_app
 description: A Flutter app built with YubiLab.
 publish_to: 'none'
@@ -128,29 +60,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 ''',
-        'web/index.html': '''<!DOCTYPE html>
-<html>
-<head>
-  <base href="$FLUTTER_BASE_HREF">
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A Flutter app built with YubiLab">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="YubiLab App">
-  <link rel="manifest" href="manifest.json">
-  <title>YubiLab Flutter App</title>
-</head>
-<body>
-  <script src="flutter_bootstrap.js" async></script>
-</body>
-</html>
-''',
-        'web/manifest.json': '''{\n    "name": "YubiLab Flutter App",\n    "short_name": "YubiLab",\n    "start_url": ".",\n    "display": "standalone",\n    "background_color": "#0d1117",\n    "theme_color": "#58a6ff",\n    "description": "A Flutter app built with YubiLab",\n    "orientation": "portrait-primary",\n    "prefer_related_applications": false\n}\n''',
         'analysis_options.yaml': 'include: package:flutter_lints/flutter.yaml\n',
-        '.metadata': '''# This file tracks properties of this Flutter project.
-project_type: app
-''',
     },
 }
 
@@ -221,10 +131,11 @@ def create_project(user):
     project_path = get_project_path(user['id'], name)
     os.makedirs(project_path, exist_ok=True)
 
-    # For Flutter projects: use 'flutter create' to generate full scaffold
-    # This ensures android/, ios/, web/, linux/, macos/, windows/ dirs exist for APK/iOS builds
+    # For Flutter projects: start with clean minimal scaffold (empty project)
+    # Only pubspec.yaml + lib/main.dart — no android/, ios/, test/ clutter
+    # Agent will generate exactly what's needed; platform dirs are created on-demand during build
     if language == 'flutter':
-        _create_flutter_project(project_path, name)
+        _create_flutter_clean(project_path, name)
     else:
         templates = LANGUAGE_TEMPLATES.get(language, LANGUAGE_TEMPLATES['python'])
         for filename, content in templates.items():
@@ -255,6 +166,25 @@ def _get_flutter_env():
         env['PATH'] = f"{flutter_bin}:{android_tools}:{android_platform}:{env.get('PATH', '')}"
         env['ANDROID_HOME'] = os.path.expanduser('~/android-sdk')
     return env
+
+
+def _create_flutter_clean(project_path, project_name):
+    """Create a CLEAN Flutter project — minimal files only.
+    Only pubspec.yaml + analysis_options.yaml. No android/, ios/, test/, web/ clutter.
+    The AI agent generates exactly what's needed; platform dirs created on-demand during build."""
+    templates = LANGUAGE_TEMPLATES.get('flutter', {})
+    for filename, content in templates.items():
+        filepath = os.path.join(project_path, filename)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        # Customize pubspec name based on project name
+        if filename == 'pubspec.yaml':
+            dart_name = project_name.lower().replace(' ', '_').replace('-', '_').replace('.', '_')
+            dart_name = ''.join(c for c in dart_name if c.isalnum() or c == '_')
+            if not dart_name or dart_name[0].isdigit():
+                dart_name = 'yubilab_app'
+            content = content.replace('name: yubilab_app', f'name: {dart_name}')
+        with open(filepath, 'w') as f:
+            f.write(content)
 
 
 def _create_flutter_project(project_path, project_name):
