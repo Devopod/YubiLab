@@ -3,6 +3,7 @@ from auth import login_required
 from models import get_db
 import os
 import shutil
+import subprocess
 from config import WORKSPACES_DIR
 
 projects_bp = Blueprint('projects', __name__)
@@ -220,13 +221,18 @@ def create_project(user):
     project_path = get_project_path(user['id'], name)
     os.makedirs(project_path, exist_ok=True)
 
-    templates = LANGUAGE_TEMPLATES.get(language, LANGUAGE_TEMPLATES['python'])
-    for filename, content in templates.items():
-        filepath = os.path.join(project_path, filename)
-        # Create subdirectories if needed (e.g. lib/main.dart, web/index.html)
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, 'w') as f:
-            f.write(content)
+    # For Flutter projects: use 'flutter create' to generate full scaffold
+    # This ensures android/, ios/, web/, linux/, macos/, windows/ dirs exist for APK/iOS builds
+    if language == 'flutter':
+        _create_flutter_project(project_path, name)
+    else:
+        templates = LANGUAGE_TEMPLATES.get(language, LANGUAGE_TEMPLATES['python'])
+        for filename, content in templates.items():
+            filepath = os.path.join(project_path, filename)
+            # Create subdirectories if needed (e.g. lib/main.dart, web/index.html)
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, 'w') as f:
+                f.write(content)
 
     return jsonify({
         'message': 'Project created',
@@ -237,6 +243,89 @@ def create_project(user):
             'description': description,
         }
     }), 201
+
+
+def _get_flutter_env():
+    """Return env dict with Flutter and Android SDK in PATH."""
+    env = os.environ.copy()
+    flutter_bin = os.path.expanduser('~/flutter/bin')
+    android_tools = os.path.expanduser('~/android-sdk/cmdline-tools/latest/bin')
+    android_platform = os.path.expanduser('~/android-sdk/platform-tools')
+    if os.path.isdir(flutter_bin):
+        env['PATH'] = f"{flutter_bin}:{android_tools}:{android_platform}:{env.get('PATH', '')}"
+        env['ANDROID_HOME'] = os.path.expanduser('~/android-sdk')
+    return env
+
+
+def _create_flutter_project(project_path, project_name):
+    """Create a Flutter project using 'flutter create' for full platform scaffold.
+    This generates android/, ios/, web/, linux/, macos/, windows/ directories
+    needed for APK/iOS/web builds."""
+    env = _get_flutter_env()
+    # Sanitize project name for Dart (lowercase, underscores, no spaces/hyphens)
+    dart_name = project_name.lower().replace(' ', '_').replace('-', '_').replace('.', '_')
+    # Remove non-alphanumeric/underscore chars
+    dart_name = ''.join(c for c in dart_name if c.isalnum() or c == '_')
+    if not dart_name or dart_name[0].isdigit():
+        dart_name = 'yubilab_app'
+
+    try:
+        result = subprocess.run(
+            f'flutter create --project-name {dart_name} .',
+            shell=True, cwd=project_path, env=env,
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode != 0:
+            # Fallback to template files if flutter create fails
+            _write_flutter_template_files(project_path)
+    except (subprocess.TimeoutExpired, Exception):
+        _write_flutter_template_files(project_path)
+
+
+def _write_flutter_template_files(project_path):
+    """Fallback: write Flutter template files manually if flutter create fails."""
+    templates = LANGUAGE_TEMPLATES.get('flutter', {})
+    for filename, content in templates.items():
+        filepath = os.path.join(project_path, filename)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'w') as f:
+            f.write(content)
+
+
+def ensure_flutter_android_scaffold(project_path):
+    """Ensure a Flutter project has the android/ directory for APK builds.
+    If missing, runs 'flutter create .' to regenerate platform scaffolds
+    without overwriting existing lib/ code."""
+    android_dir = os.path.join(project_path, 'android')
+    if os.path.isdir(android_dir):
+        return True  # Already exists
+
+    pubspec = os.path.join(project_path, 'pubspec.yaml')
+    if not os.path.isfile(pubspec):
+        return False  # Not a Flutter project
+
+    # Read pubspec to get project name
+    dart_name = 'yubilab_app'
+    try:
+        with open(pubspec, 'r') as f:
+            for line in f:
+                if line.startswith('name:'):
+                    dart_name = line.split(':', 1)[1].strip()
+                    break
+    except Exception:
+        pass
+
+    env = _get_flutter_env()
+    try:
+        # flutter create . on existing project regenerates platform dirs without touching lib/
+        result = subprocess.run(
+            f'flutter create --project-name {dart_name} .',
+            shell=True, cwd=project_path, env=env,
+            capture_output=True, text=True, timeout=120
+        )
+        return result.returncode == 0 and os.path.isdir(android_dir)
+    except Exception:
+        return False
 
 
 @projects_bp.route('/api/projects/<int:project_id>', methods=['DELETE'])

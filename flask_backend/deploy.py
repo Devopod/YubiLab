@@ -504,6 +504,18 @@ def flutter_build(user, project_id):
 
     env = _get_flutter_env()
 
+    # For APK builds: ensure android/ scaffold exists (auto-generate if missing)
+    if build_type == 'apk':
+        android_dir = os.path.join(project_path, 'android')
+        if not os.path.isdir(android_dir):
+            from projects import ensure_flutter_android_scaffold
+            scaffold_ok = ensure_flutter_android_scaffold(project_path)
+            if not scaffold_ok:
+                return jsonify({
+                    'error': 'Failed to generate Android scaffold. The android/ directory is missing and could not be auto-created.',
+                    'details': 'Try creating a new Flutter project or run "flutter create ." in the project directory.'
+                }), 500
+
     # First run flutter pub get
     try:
         pub_result = subprocess.run(
