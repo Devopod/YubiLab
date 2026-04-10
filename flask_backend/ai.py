@@ -657,45 +657,37 @@ def ai_generate(user):
     if not prompt:
         return jsonify({'error': 'Prompt is required'}), 400
 
-    # Always read full project source code for context
-    project_files_context = ''
-    if project_id:
-        conn = get_db()
-        project = conn.execute(
-            'SELECT * FROM projects WHERE id = ? AND user_id = ?',
-            (project_id, user['id'])
-        ).fetchone()
-        conn.close()
-        if project:
-            project_path = get_project_path(user['id'], project['name'])
-            project_files_context, _ = get_project_files_context(project_path)
-
+    # Smart context: only include currently open file for speed
+    # Full project scan is too slow for quick generate/debug/explain
     system_prompts = {
-        'generate': f"You are YubiAI, an expert coding assistant built into YubiLab IDE. You have access to the full project source code. Generate clean, well-commented {language} code based on the user's request. Return ONLY the code without markdown code blocks unless the user asks for explanation.",
-        'debug': f"You are YubiAI, a debugging expert in YubiLab IDE. You have access to the full project source code. Analyze the following {language} code and identify bugs, then provide the fixed version. Explain what was wrong briefly.",
-        'explain': f"You are YubiAI, a code explanation assistant in YubiLab IDE. You have access to the full project source code. Explain the code thoroughly — describe its structure, purpose, and how the individual pieces work together.",
-        'complete': f"You are YubiAI, an autocomplete assistant in YubiLab IDE. You have access to the full project source code. Complete the following {language} code naturally. Return ONLY the completed code.",
+        'generate': f"You are YubiAI, an expert {language} coding assistant in YubiLab IDE. Generate clean, production-quality code. Return ONLY the code without markdown code blocks unless asked for explanation. Be concise and fast.",
+        'debug': f"You are YubiAI, a {language} debugging expert in YubiLab IDE. Find and fix bugs quickly. Show the fixed code and briefly explain the issue.",
+        'explain': f"You are YubiAI, a code explanation assistant in YubiLab IDE. Explain the code clearly and concisely — structure, purpose, and how pieces connect.",
+        'complete': f"You are YubiAI, an autocomplete assistant in YubiLab IDE. Complete the {language} code naturally. Return ONLY the completed code.",
     }
 
     system_prompt = system_prompts.get(action, system_prompts['generate'])
 
-    # Build full prompt with project source code
+    # Build prompt with only the open file context (fast)
     parts = []
-    if project_files_context:
-        parts.append(f"Full project source code:\n{project_files_context}")
     if code_context:
-        parts.append(f"Currently open file in editor:\n```{language}\n{code_context}\n```")
+        parts.append(f"Currently open file ({language}):\n```{language}\n{code_context}\n```")
     parts.append(f"User request: {prompt}")
     full_prompt = '\n\n'.join(parts)
 
-    result = call_yubiai(full_prompt, system_prompt=system_prompt, max_tokens=32768)
+    # Use fast model for quick actions, full model only for complex generation
+    is_simple = len(prompt) < 200 and action in ('explain', 'debug', 'complete')
+    model = 'llama-3.3-70b-versatile' if is_simple else 'gpt-oss-120b'
+    max_tokens = 4096 if is_simple else 8192
+
+    result = call_yubiai(full_prompt, system_prompt=system_prompt, model=model, max_tokens=max_tokens, retries=5)
 
     if 'error' in result:
         return jsonify({'error': result['error'], 'action': action}), 500
 
     return jsonify({
         'response': result.get('response', ''),
-        'model': result.get('model', 'gpt-oss-120b'),
+        'model': result.get('model', model),
         'usage': result.get('usage', {}),
         'action': action,
     })

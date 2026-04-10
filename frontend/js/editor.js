@@ -1001,9 +1001,9 @@ async function sendAIMessage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            timeout: aiAction === 'agent' ? 900000 : 300000,  // 15 min for agent, 5 min for others
-            maxRetries: aiAction === 'agent' ? 8 : 6,
-            retryDelay: 6000,
+            timeout: aiAction === 'agent' ? 900000 : 120000,  // 15 min for agent, 2 min for others
+            maxRetries: aiAction === 'agent' ? 8 : 4,
+            retryDelay: aiAction === 'agent' ? 6000 : 3000,
         });
 
         const data = await res.json();
