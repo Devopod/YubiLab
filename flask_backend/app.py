@@ -167,51 +167,52 @@ def preview_app(project_id, path):
     if query_string:
         target_url += f'?{query_string}'
 
-    try:
-        # Forward the original request method and headers
-        headers = {}
-        for key in ['Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'Referer']:
-            if key in request.headers:
-                headers[key] = request.headers[key]
-        # Tell the deployed app we're behind a proxy (disables HTTPS redirects in Talisman etc.)
-        headers['X-Forwarded-Proto'] = 'https'
-        headers['X-Forwarded-For'] = request.remote_addr or '127.0.0.1'
+    # Build headers for proxied request
+    headers = {}
+    for key in ['Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'Referer']:
+        if key in request.headers:
+            headers[key] = request.headers[key]
+    headers['X-Forwarded-Proto'] = 'https'
+    headers['X-Forwarded-For'] = request.remote_addr or '127.0.0.1'
 
-        if request.method == 'POST':
-            resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=15, allow_redirects=True, verify=False)
-        else:
-            resp = req.get(target_url, headers=headers, timeout=15, allow_redirects=True, verify=False)
+    # Wait for the app to be ready (retry internally instead of showing "Starting up..." page)
+    import time as _time
+    last_error = None
+    for attempt in range(30):  # Up to 30 retries (~30s total)
+        try:
+            if request.method == 'POST':
+                resp = req.post(target_url, data=request.get_data(), headers=headers, timeout=15, allow_redirects=True, verify=False)
+            else:
+                resp = req.get(target_url, headers=headers, timeout=15, allow_redirects=True, verify=False)
 
-        from flask import Response
-        excluded_headers = ['content-encoding', 'transfer-encoding', 'content-length']
-        resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded_headers}
+            from flask import Response
+            excluded_headers = ['content-encoding', 'transfer-encoding', 'content-length']
+            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded_headers}
 
-        content = resp.content
-        content_type = resp.headers.get('Content-Type', '')
+            content = resp.content
+            content_type = resp.headers.get('Content-Type', '')
 
-        # For HTML responses, rewrite absolute URLs so static assets load through the proxy
-        if 'text/html' in content_type:
-            html = content.decode('utf-8', errors='replace')
-            prefix = f'/preview-app/{project_id}'
-            # Rewrite href="/..." and src="/..." to go through proxy
-            import re
-            html = re.sub(r'(href|src|action)="/', rf'\1="{prefix}/', html)
-            content = html.encode('utf-8')
+            # For HTML responses, rewrite absolute URLs so static assets load through the proxy
+            if 'text/html' in content_type:
+                html = content.decode('utf-8', errors='replace')
+                prefix = f'/preview-app/{project_id}'
+                import re
+                html = re.sub(r'(href|src|action)="/', rf'\1="{prefix}/', html)
+                content = html.encode('utf-8')
 
-        return Response(content, status=resp.status_code, headers=resp_headers)
-    except req.exceptions.ConnectionError:
-        return '''<html><head><meta http-equiv="refresh" content="1"></head>
-<body style="background:#0d1117;color:#8b949e;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-<div style="text-align:center">
-<div style="width:40px;height:40px;border:3px solid #30363d;border-top:3px solid #58a6ff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
-<h2 style="color:#58a6ff;margin-bottom:8px;">Starting up...</h2>
-<p>Your app is launching. This page will auto-refresh.</p>
-<style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
-</div></body></html>''', 503
-    except Exception as e:
-        return f'''<html><head><meta http-equiv="refresh" content="3"></head>
-<body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-<div style="text-align:center"><h2>Error</h2><p>{str(e)}</p><p style="color:#8b949e;font-size:0.85rem;">Retrying automatically...</p></div></body></html>''', 503
+            return Response(content, status=resp.status_code, headers=resp_headers)
+        except req.exceptions.ConnectionError:
+            last_error = "App is still starting up..."
+            _time.sleep(1)
+            continue
+        except Exception as e:
+            last_error = str(e)
+            _time.sleep(1)
+            continue
+
+    # Only show error page after all retries exhausted (should rarely happen)
+    return f'''<html><body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><h2>App failed to start</h2><p style="color:#8b949e;">{last_error}</p><p style="color:#8b949e;font-size:0.85rem;">Check the deploy logs for details.</p></div></body></html>''', 503
 
 
 @app.route('/api/health', methods=['GET'])

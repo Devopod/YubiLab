@@ -1183,7 +1183,7 @@ function renderAgentResult(data) {
     // Deploy result
     if (data.deploy_result) {
         if (data.deploy_result.success) {
-            html += `<div class="agent-test-result" style="border-color:#3fb950;background:rgba(63,185,80,0.1);"><strong>🚀 Auto-Deployed!</strong> Running on port ${data.deploy_result.port}${data.deploy_result.ready ? ' — Ready!' : ' — Starting up...'}</div>`;
+            html += `<div class="agent-test-result" style="border-color:#3fb950;background:rgba(63,185,80,0.1);"><strong>🚀 Auto-Deployed!</strong> Running on port ${data.deploy_result.port} — Ready!</div>`;
         } else {
             html += `<div class="agent-test-result" style="border-color:#f85149;"><strong>🚀 Deploy Failed:</strong> ${escapeHtml(data.deploy_result.error || 'Unknown error')}</div>`;
         }
