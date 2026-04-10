@@ -227,6 +227,13 @@ def deploy_project_internal(user, project_id, project_path, run_command_override
     env['FLASK_APP'] = 'app.py'
     env.pop('WERKZEUG_SERVER_FD', None)
     env.pop('WERKZEUG_RUN_MAIN', None)
+    # Ensure Flutter and Android SDK are in PATH for Flutter projects
+    flutter_bin = os.path.expanduser('~/flutter/bin')
+    android_tools = os.path.expanduser('~/android-sdk/cmdline-tools/latest/bin')
+    android_platform = os.path.expanduser('~/android-sdk/platform-tools')
+    if os.path.isdir(flutter_bin):
+        env['PATH'] = f"{flutter_bin}:{android_tools}:{android_platform}:{env.get('PATH', '')}"
+        env['ANDROID_HOME'] = os.path.expanduser('~/android-sdk')
 
     try:
         log_file = os.path.join(project_path, '.deploy.log')

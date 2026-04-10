@@ -54,6 +54,12 @@ const LANGUAGE_CONFIG = {
         compile: (file, out) => ({ cmd: 'rustc', args: [file, '-o', out] }),
         run: (out) => ({ cmd: out, args: [] }),
     },
+    'dart': {
+        extension: '.dart',
+        command: path.join(os.homedir(), 'flutter', 'bin', 'dart'),
+        args: (file) => ['run', file],
+        compile: null,
+    },
 };
 
 // Timeout for code execution (30 seconds)
@@ -91,7 +97,14 @@ function executeCode(code, language, projectPath) {
                 const proc = spawn(cmd, args, {
                     cwd: cwd || projectPath || tmpDir,
                     timeout: EXECUTION_TIMEOUT,
-                    env: { ...process.env, HOME: os.homedir(), PORT: '3000', FLASK_RUN_PORT: '3000' },
+                    env: {
+                        ...process.env,
+                        HOME: os.homedir(),
+                        PORT: '3000',
+                        FLASK_RUN_PORT: '3000',
+                        PATH: path.join(os.homedir(), 'flutter', 'bin') + ':' + path.join(os.homedir(), 'android-sdk', 'platform-tools') + ':' + process.env.PATH,
+                        ANDROID_HOME: path.join(os.homedir(), 'android-sdk'),
+                    },
                 });
 
                 proc.stdout.on('data', (data) => {
@@ -225,7 +238,14 @@ function setupExecutor(socket) {
         function runStreaming(cmd, args, cwd) {
             const proc = spawn(cmd, args, {
                 cwd: cwd || tmpDir,
-                env: { ...process.env, HOME: os.homedir(), PORT: '3000', FLASK_RUN_PORT: '3000' },
+                env: {
+                    ...process.env,
+                    HOME: os.homedir(),
+                    PORT: '3000',
+                    FLASK_RUN_PORT: '3000',
+                    PATH: path.join(os.homedir(), 'flutter', 'bin') + ':' + path.join(os.homedir(), 'android-sdk', 'platform-tools') + ':' + process.env.PATH,
+                    ANDROID_HOME: path.join(os.homedir(), 'android-sdk'),
+                },
             });
 
             proc.stdout.on('data', (chunk) => {

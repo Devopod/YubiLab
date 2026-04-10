@@ -7,6 +7,10 @@ set -e
 YUBILAB_DIR="$(cd "$(dirname "$0")" && pwd)"
 NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN:-3BLYdMy1KhWPvdFym14RZZxmk4w_7FbEi7WjXzZHL9diBFyYc}"
 
+# Flutter & Android SDK
+export PATH="$HOME/flutter/bin:$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$PATH"
+export ANDROID_HOME="$HOME/android-sdk"
+
 echo "=== Starting YubiLab Services ==="
 
 # 1. Start Flask Backend

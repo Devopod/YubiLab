@@ -30,7 +30,8 @@ function setupTerminal(socket) {
                     TERM: 'xterm-256color',
                     COLORTERM: 'truecolor',
                     HOME: os.homedir(),
-                    PATH: process.env.PATH,
+                    PATH: path.join(os.homedir(), 'flutter', 'bin') + ':' + path.join(os.homedir(), 'android-sdk', 'cmdline-tools', 'latest', 'bin') + ':' + path.join(os.homedir(), 'android-sdk', 'platform-tools') + ':' + process.env.PATH,
+                    ANDROID_HOME: path.join(os.homedir(), 'android-sdk'),
                     PORT: '3000',
                     FLASK_RUN_PORT: '3000',
                 }
