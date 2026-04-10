@@ -250,12 +250,14 @@ function renderTreeItems(items, depth) {
         } else {
             const icon = getIconForFile(item.name);
             const isActive = openTabs[activeTabIndex]?.path === item.path;
+            const isAudio = isAudioFile(item.name);
             html += `
                 <div class="file-item ${isActive ? 'active' : ''}" style="padding-left:${12 + indent + 16}px"
                      onclick="openFile('${escapeAttr(item.path)}', '${escapeAttr(item.name)}')"
                      oncontextmenu="showContextMenu(event, '${escapeAttr(item.path)}', 'file')">
-                    <span class="file-icon">${icon}</span>
+                    <span class="file-icon">${isAudio ? '🎵' : icon}</span>
                     <span class="file-name">${escapeHtml(item.name)}</span>
+                    ${isAudio ? `<span class="audio-play-inline" onclick="event.stopPropagation();playAudioFile('${escapeAttr(item.path)}','${escapeAttr(item.name)}')" title="Play audio" style="margin-left:auto;cursor:pointer;font-size:0.7rem;opacity:0.7;padding:0 4px;">&#9654;</span>` : ''}
                 </div>`;
         }
     }
@@ -525,6 +527,13 @@ function showContextMenu(event, path, type) {
     menu.style.display = 'block';
     menu.style.left = event.pageX + 'px';
     menu.style.top = event.pageY + 'px';
+
+    // Show/hide "Play Audio" option based on file type
+    const playItem = document.getElementById('ctx-play-audio');
+    if (playItem) {
+        const fileName = path.split('/').pop();
+        playItem.style.display = (type === 'file' && isAudioFile(fileName)) ? 'block' : 'none';
+    }
 }
 
 function contextAction(action) {
@@ -550,6 +559,13 @@ function contextAction(action) {
             showInputDialog('New Folder', 'Enter folder name:', '', (name) => {
                 if (name) createFileOrFolder(dir2 + name, 'directory');
             });
+            break;
+        }
+        case 'play': {
+            const fileName = path.split('/').pop();
+            if (isAudioFile(fileName)) {
+                playAudioFile(path, fileName);
+            }
             break;
         }
     }
@@ -985,7 +1001,9 @@ async function sendAIMessage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            timeout: aiAction === 'agent' ? 600000 : 120000,  // 10 min for agent, 2 min for others
+            timeout: aiAction === 'agent' ? 900000 : 300000,  // 15 min for agent, 5 min for others
+            maxRetries: aiAction === 'agent' ? 8 : 6,
+            retryDelay: 6000,
         });
 
         const data = await res.json();
@@ -1907,6 +1925,139 @@ function browserOpenExternal() {
     const urlBar = document.getElementById('browser-url-bar');
     if (urlBar && urlBar.value) {
         window.open(urlBar.value, '_blank');
+    }
+}
+
+// ============================================
+// AUDIO PLAYER (File Manager Audio Playback)
+// ============================================
+
+const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'wma', 'webm'];
+let _audioElement = null;
+let _audioUpdateInterval = null;
+
+function isAudioFile(filename) {
+    const ext = (filename || '').split('.').pop().toLowerCase();
+    return AUDIO_EXTENSIONS.includes(ext);
+}
+
+function playAudioFile(filePath, fileName) {
+    if (!projectId) return;
+    const audio = document.getElementById('audio-element');
+    if (!audio) return;
+    _audioElement = audio;
+
+    // Build the media URL
+    const mediaUrl = `/api/projects/${projectId}/files/media/${encodeURIComponent(filePath)}`;
+    audio.src = mediaUrl;
+    audio.volume = (document.getElementById('audio-volume')?.value || 80) / 100;
+
+    // Show player bar
+    const bar = document.getElementById('audio-player-bar');
+    if (bar) bar.style.display = 'block';
+
+    const nameEl = document.getElementById('audio-player-name');
+    if (nameEl) {
+        nameEl.textContent = fileName || filePath.split('/').pop();
+        nameEl.title = filePath;
+    }
+
+    // Play
+    audio.play().then(() => {
+        _updatePlayBtn(true);
+        _startAudioTimer();
+    }).catch(e => {
+        showToast('Cannot play audio: ' + e.message, 'error');
+    });
+
+    // Events
+    audio.onended = () => {
+        _updatePlayBtn(false);
+        _stopAudioTimer();
+        document.getElementById('audio-seek').value = 0;
+    };
+    audio.onerror = () => {
+        showToast('Audio playback error', 'error');
+        _updatePlayBtn(false);
+    };
+}
+
+function toggleAudioPlayback() {
+    const audio = _audioElement || document.getElementById('audio-element');
+    if (!audio || !audio.src) return;
+    if (audio.paused) {
+        audio.play();
+        _updatePlayBtn(true);
+        _startAudioTimer();
+    } else {
+        audio.pause();
+        _updatePlayBtn(false);
+        _stopAudioTimer();
+    }
+}
+
+function stopAudio() {
+    const audio = _audioElement || document.getElementById('audio-element');
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    _updatePlayBtn(false);
+    _stopAudioTimer();
+    document.getElementById('audio-seek').value = 0;
+    document.getElementById('audio-time').textContent = '0:00 / 0:00';
+}
+
+function closeAudioPlayer() {
+    stopAudio();
+    const bar = document.getElementById('audio-player-bar');
+    if (bar) bar.style.display = 'none';
+    if (_audioElement) {
+        _audioElement.src = '';
+        _audioElement = null;
+    }
+}
+
+function seekAudio(val) {
+    const audio = _audioElement || document.getElementById('audio-element');
+    if (!audio || !audio.duration) return;
+    audio.currentTime = (val / 100) * audio.duration;
+}
+
+function setAudioVolume(val) {
+    const audio = _audioElement || document.getElementById('audio-element');
+    if (audio) audio.volume = val / 100;
+}
+
+function _updatePlayBtn(playing) {
+    const btn = document.getElementById('audio-play-btn');
+    if (btn) btn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+}
+
+function _formatTime(sec) {
+    if (!sec || isNaN(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function _startAudioTimer() {
+    _stopAudioTimer();
+    _audioUpdateInterval = setInterval(() => {
+        const audio = _audioElement || document.getElementById('audio-element');
+        if (!audio) return;
+        const seek = document.getElementById('audio-seek');
+        const time = document.getElementById('audio-time');
+        if (audio.duration) {
+            if (seek) seek.value = (audio.currentTime / audio.duration) * 100;
+            if (time) time.textContent = `${_formatTime(audio.currentTime)} / ${_formatTime(audio.duration)}`;
+        }
+    }, 250);
+}
+
+function _stopAudioTimer() {
+    if (_audioUpdateInterval) {
+        clearInterval(_audioUpdateInterval);
+        _audioUpdateInterval = null;
     }
 }
 

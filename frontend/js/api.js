@@ -1,4 +1,4 @@
-// YubiLab API Helper
+// YubiLab API Helper — Smart Error Handling & Auto-Retry
 // Uses XMLHttpRequest instead of fetch to work around browser security restriction
 // that blocks fetch() when the page URL contains basic-auth credentials (user:pass@host)
 
@@ -68,33 +68,45 @@ function _apiFetchOnce(url, options = {}) {
         };
 
         xhr.ontimeout = function () {
-            reject(new TypeError('Request timed out. The server may be busy - please try again.'));
+            // Timeouts are retryable — server might be busy with a long agent call
+            reject({ retryable: true, status: 0, text: 'timeout', isTimeout: true });
         };
 
         xhr.send(options.body || null);
     });
 }
 
-// apiFetch with automatic retry on gateway/tunnel errors (502, 503, 504, connection errors)
-// Ngrok free tier often returns 502/503 HTML when upstream is slow — this retries transparently
+// apiFetch with intelligent auto-retry on gateway/tunnel errors
+// Handles: ngrok 502/503/504, connection drops, timeouts — all retried transparently
+// Agent calls get more retries and longer delays since they take minutes
 async function apiFetch(url, options = {}) {
-    const maxRetries = options.maxRetries || 5;
-    const retryDelay = options.retryDelay || 3000;  // 3 seconds between retries
+    const isAgentCall = url.includes('/api/ai/agent');
+    const isLongCall = url.includes('/api/ai/') || url.includes('/api/flutter/build');
+
+    // Smart retry config based on request type
+    const maxRetries = options.maxRetries || (isAgentCall ? 8 : (isLongCall ? 6 : 5));
+    const retryDelay = options.retryDelay || 6000;  // 6 seconds between retries
     let lastError = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
             return await _apiFetchOnce(url, options);
         } catch (e) {
+            lastError = e;
             if (e && e.retryable && attempt < maxRetries - 1) {
-                lastError = e;
-                console.warn(`[apiFetch] Gateway error (${e.status}), retrying in ${retryDelay/1000}s... (attempt ${attempt + 1}/${maxRetries})`);
-                await new Promise(r => setTimeout(r, retryDelay));
+                // Escalating delay: 6s, 8s, 10s, 12s, 15s, 15s, 15s, 15s
+                const escalatingDelay = Math.min(retryDelay + (attempt * 2000), 15000);
+                const reason = e.isTimeout ? 'Timeout' : `Gateway error (${e.status})`;
+                console.warn(`[apiFetch] ${reason} on ${url}, retrying in ${escalatingDelay/1000}s... (attempt ${attempt + 1}/${maxRetries})`);
+                await new Promise(r => setTimeout(r, escalatingDelay));
                 continue;
             }
-            // Non-retryable or exhausted retries
+            // Non-retryable or exhausted retries — give a clear message
             if (e && e.retryable) {
-                throw new TypeError('Server is temporarily unavailable after multiple retries. Please try again.');
+                if (e.isTimeout) {
+                    throw new TypeError('Request timed out after multiple retries. The AI server may be processing a large request — please try again.');
+                }
+                throw new TypeError('Server is temporarily unavailable after multiple retries. Please try again in a moment.');
             }
             throw e;
         }
@@ -122,7 +134,7 @@ async function apiRequest(url, method = 'GET', body = null) {
 let _connectionOk = true;
 async function checkBackendHealth() {
     try {
-        const res = await apiFetch('/api/health', { timeout: 8000 });
+        const res = await apiFetch('/api/health', { timeout: 8000, maxRetries: 2, retryDelay: 2000 });
         if (res.ok) {
             const data = await res.json();
             _connectionOk = data && data.status === 'ok';

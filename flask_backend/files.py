@@ -1,5 +1,5 @@
-from flask import Blueprint, request, jsonify
-from auth import login_required
+from flask import Blueprint, request, jsonify, send_from_directory
+from auth import login_required, get_current_user
 from models import get_db
 import os
 from config import WORKSPACES_DIR
@@ -231,6 +231,38 @@ def delete_file(user, project_id):
         return jsonify({'message': 'Deleted successfully', 'path': file_path})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@files_bp.route('/api/projects/<int:project_id>/files/media/<path:file_path>')
+def serve_media_file(project_id, file_path):
+    """Serve audio/media files from project workspace for playback in the editor."""
+    user = get_current_user()
+    if not user:
+        return "Unauthorized", 401
+
+    conn = get_db()
+    project = conn.execute(
+        'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+        (project_id, user['id'])
+    ).fetchone()
+    conn.close()
+
+    if not project:
+        return "Not found", 404
+
+    project_path = get_project_path(user['id'], project['name'])
+    full_path = os.path.join(project_path, file_path)
+
+    if not validate_path(project_path, full_path):
+        return "Forbidden", 403
+
+    if not os.path.isfile(full_path):
+        return "Not found", 404
+
+    # Determine directory and filename for send_from_directory
+    directory = os.path.dirname(full_path)
+    filename = os.path.basename(full_path)
+    return send_from_directory(directory, filename)
 
 
 @files_bp.route('/api/projects/<int:project_id>/files/rename', methods=['POST'])
