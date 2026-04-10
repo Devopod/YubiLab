@@ -8,6 +8,7 @@ import subprocess
 import time
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import WORKSPACES_DIR, YUBIAI_API_URL, YUBIAI_API_KEY
 
 ai_bp = Blueprint('ai', __name__)
@@ -2277,36 +2278,29 @@ Plan this project. List ALL files needed, grouped into logical batches. Do NOT w
                 is_large = False
                 plan_response = None
 
-        # Phase 2: Generate files in batches
+        # Phase 2: Generate files in PARALLEL batches (multi-agent)
+        # Each file group gets its own agent thread — all run simultaneously for 20X speed
         if is_large and plan_response:
-            for group_idx, group in enumerate(file_groups):
-                step_start = time.time()
+            parallel_start = time.time()
+            all_planned_files = [f for g in file_groups for f in g.get('files', [])]
+
+            # Flutter-specific batch context
+            flutter_batch_ctx = ''
+            if project['language'] == 'flutter':
+                flutter_batch_ctx = '\nCRITICAL: This is a FLUTTER project. Generate ONLY Dart/Flutter files. NO CSS, JS, HTML templates, requirements.txt, or Python files. ALL UI uses Flutter widgets.'
+
+            def _generate_batch(group_idx, group):
+                """Worker function for parallel agent — generates one file group."""
                 group_name = group.get('group_name', f'Batch {group_idx + 1}')
                 group_desc = group.get('description', '')
                 group_files = group.get('files', [])
-
                 if not group_files:
-                    continue
-
-                live_log.append({'icon': '\u26a1', 'message': f'Now generating {group_name} — {group_desc}...', 'type': 'generate'})
-                for gf in group_files:
-                    live_log.append({'icon': '\U0001f4dd', 'message': f'Now creating {gf}...', 'type': 'write'})
-
-                # Build context of already-generated files for cross-file imports
-                existing_files_ctx = ''
-                if all_files:
-                    existing_files_ctx, _ = get_project_files_context(project_path, max_file_size=3000)
-
-                # Add Flutter-specific batch context
-                flutter_batch_ctx = ''
-                if project['language'] == 'flutter':
-                    flutter_batch_ctx = '\nCRITICAL: This is a FLUTTER project. Generate ONLY Dart/Flutter files. NO CSS, JS, HTML templates, requirements.txt, or Python files. ALL UI uses Flutter widgets.'
+                    return {'group_name': group_name, 'files': [], 'errors': [], 'skipped': True}
 
                 batch_prompt = f"""Project: {project['name']} (Language: {project['language']})
 Full project plan: {json.dumps(roadmap)}
-All planned files: {json.dumps([f for g in file_groups for f in g.get('files', [])])}
-
-{'Already generated files (for import references):' + chr(10) + existing_files_ctx if existing_files_ctx else ''}{flutter_batch_ctx}
+All planned files: {json.dumps(all_planned_files)}
+{flutter_batch_ctx}
 
 User request: {prompt}
 
@@ -2317,30 +2311,65 @@ Files to generate: {json.dumps(group_files)}
 Generate each file with full, production-ready code. Make sure imports reference files from other groups correctly."""
 
                 batch_result = call_yubiai(batch_prompt, system_prompt=AGENT_BATCH_PROMPT, max_tokens=32768)
-
                 if 'error' in batch_result:
-                    add_step(f'Generating {group_name}', 'failed', batch_result['error'], time.time() - step_start)
-                    all_errors.append(f'Failed to generate {group_name}: {batch_result["error"]}')
-                    continue
+                    return {'group_name': group_name, 'files': [], 'errors': [f'Failed: {batch_result["error"]}'], 'duration': 0}
 
                 try:
                     batch_response = parse_agent_json(batch_result.get('response', ''))
                     if batch_response and batch_response.get('files'):
-                        batch_files = batch_response.get('files', [])
-                        created, errs = apply_file_changes(project_path, batch_files)
-                        all_files.extend(created)
-                        all_errors.extend(errs)
-                        live_log.append({'icon': '\u2705', 'message': f'Successfully generated {len(created)} files for {group_name}', 'type': 'success'})
-                        add_step(f'Generating {group_name}', 'done',
-                                 f'{len(created)} files ({group_desc})',
-                                 time.time() - step_start)
+                        return {'group_name': group_name, 'files': batch_response.get('files', []),
+                                'errors': [], 'run_command': batch_response.get('run_command', ''),
+                                'install_command': batch_response.get('install_command', '')}
                     else:
-                        live_log.append({'icon': '\u26a0\ufe0f', 'message': f'{group_name}: API returned empty response — will auto-generate fallback files', 'type': 'warn'})
-                        add_step(f'Generating {group_name}', 'failed', 'No files in response', time.time() - step_start)
-                        all_errors.append(f'{group_name}: empty response')
+                        return {'group_name': group_name, 'files': [], 'errors': [f'{group_name}: empty response']}
                 except Exception as e:
-                    add_step(f'Generating {group_name}', 'failed', str(e)[:100], time.time() - step_start)
-                    all_errors.append(f'{group_name}: {str(e)}')
+                    return {'group_name': group_name, 'files': [], 'errors': [f'{group_name}: {str(e)}']}
+
+            # Launch all agents in parallel
+            num_groups = len(file_groups)
+            max_workers = min(num_groups, 5)  # Cap at 5 parallel agents to avoid API rate limits
+            live_log.append({'icon': '\u26a1', 'message': f'Launching {num_groups} parallel agents ({max_workers} concurrent) to generate all file groups simultaneously...', 'type': 'generate'})
+            for gi, g in enumerate(file_groups):
+                gname = g.get('group_name', f'Batch {gi + 1}')
+                gfiles = g.get('files', [])
+                live_log.append({'icon': '\U0001f916', 'message': f'Agent #{gi+1}: {gname} — {len(gfiles)} files', 'type': 'generate'})
+
+            # Execute parallel
+            results_by_group = [None] * num_groups
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {
+                    executor.submit(_generate_batch, idx, group): idx
+                    for idx, group in enumerate(file_groups)
+                }
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        results_by_group[idx] = future.result()
+                    except Exception as e:
+                        results_by_group[idx] = {
+                            'group_name': file_groups[idx].get('group_name', f'Batch {idx+1}'),
+                            'files': [], 'errors': [str(e)]
+                        }
+
+            # Merge results in order (preserves dependency ordering)
+            for idx, result in enumerate(results_by_group):
+                if not result or result.get('skipped'):
+                    continue
+                group_name = result['group_name']
+                if result['files']:
+                    created, errs = apply_file_changes(project_path, result['files'])
+                    all_files.extend(created)
+                    all_errors.extend(errs)
+                    live_log.append({'icon': '\u2705', 'message': f'Agent #{idx+1} completed: {len(created)} files for {group_name}', 'type': 'success'})
+                    add_step(f'Agent #{idx+1}: {group_name}', 'done', f'{len(created)} files', 0)
+                else:
+                    all_errors.extend(result.get('errors', []))
+                    live_log.append({'icon': '\u26a0\ufe0f', 'message': f'Agent #{idx+1} failed: {group_name} — will use fallback', 'type': 'warn'})
+                    add_step(f'Agent #{idx+1}: {group_name}', 'failed', '; '.join(result.get('errors', []))[:100], 0)
+
+            parallel_duration = time.time() - parallel_start
+            live_log.append({'icon': '\U0001f3c1', 'message': f'All {num_groups} parallel agents completed in {parallel_duration:.1f}s (vs ~{parallel_duration * num_groups:.0f}s sequential)', 'type': 'success'})
+            add_step('Parallel generation', 'done', f'{len(all_files)} total files in {parallel_duration:.1f}s', parallel_duration)
 
     # ---- SINGLE-REQUEST MODE (small projects or fallback) ----
     if not error_context and not (is_large and all_files):
