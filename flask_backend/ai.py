@@ -201,6 +201,317 @@ def get_project_files_context(project_path, max_file_size=10000):
     return files_context, file_list
 
 
+# ============================================
+# SMART CONTEXT SELECTION (NLP-based)
+# ============================================
+
+# Binary/non-code extensions to skip
+BINARY_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.webp', '.bmp',
+    '.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma',
+    '.mp4', '.avi', '.mov', '.mkv', '.webm',
+    '.zip', '.tar', '.gz', '.rar', '.7z',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx',
+    '.pyc', '.pyo', '.class', '.o', '.so', '.dll', '.exe',
+    '.woff', '.woff2', '.ttf', '.eot', '.otf',
+    '.sqlite', '.db', '.sqlite3',
+}
+
+# High-priority files that are almost always relevant
+PRIORITY_FILES = {
+    'main.py', 'app.py', 'index.js', 'server.js', 'index.html',
+    'main.dart', 'routes.py', 'views.py', 'models.py', '__init__.py',
+    'package.json', 'requirements.txt', 'pubspec.yaml', 'Cargo.toml',
+    'config.py', 'settings.py', 'urls.py', 'schema.py',
+    'Makefile', 'Dockerfile', 'docker-compose.yml',
+    'README.md', '.env',
+}
+
+
+def _extract_keywords(text):
+    """Extract meaningful keywords from user prompt using NLP-like heuristics.
+    Finds: function names, class names, variable names, file references, technical terms."""
+    keywords = set()
+    text_lower = text.lower()
+
+    # 1. Extract quoted strings (file names, function names user explicitly mentions)
+    for match in re.finditer(r'["\']([^"\']+)["\']', text):
+        keywords.add(match.group(1).lower())
+
+    # 2. Extract file-like references (e.g., "app.py", "index.html", "main.dart")
+    for match in re.finditer(r'(\w+\.\w{1,6})', text):
+        keywords.add(match.group(1).lower())
+
+    # 3. Extract camelCase and PascalCase identifiers (class/function names)
+    for match in re.finditer(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', text):
+        keywords.add(match.group(1).lower())
+        # Also add individual words from camelCase
+        parts = re.findall(r'[A-Z][a-z]+', match.group(1))
+        for p in parts:
+            if len(p) > 2:
+                keywords.add(p.lower())
+
+    # 4. Extract snake_case identifiers
+    for match in re.finditer(r'\b([a-z]+_[a-z_]+)\b', text):
+        keywords.add(match.group(1).lower())
+
+    # 5. Extract technical terms (import, route, model, template, etc.)
+    tech_terms = re.findall(r'\b(import|from|class|def|function|route|model|template|'
+                            r'view|controller|schema|migration|test|config|auth|login|'
+                            r'signup|register|database|api|endpoint|middleware|widget|'
+                            r'screen|page|component|service|handler|utils?|helper|'
+                            r'static|style|css|html|layout|navbar|sidebar|footer|header|'
+                            r'form|button|input|table|card|modal|deploy|build|run)\b',
+                            text_lower)
+    keywords.update(tech_terms)
+
+    # 6. Extract significant words (3+ chars, not stopwords)
+    stopwords = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had',
+                 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'been', 'some', 'them',
+                 'than', 'its', 'over', 'into', 'just', 'about', 'with', 'this', 'that',
+                 'from', 'they', 'will', 'would', 'there', 'their', 'what', 'which', 'when',
+                 'make', 'like', 'time', 'very', 'your', 'how', 'each', 'she', 'do', 'does',
+                 'did', 'get', 'also', 'more', 'want', 'need', 'please', 'add', 'use', 'using',
+                 'should', 'could', 'where', 'here', 'show', 'give', 'tell', 'know', 'why',
+                 'kore', 'kora', 'daw', 'jeno', 'thake', 'hobe', 'aro', 'eta', 'ota',  # Bengali stopwords
+                 'solve', 'fix', 'error', 'issue', 'problem', 'change', 'update'}
+    words = re.findall(r'\b([a-zA-Z]{3,})\b', text)
+    for w in words:
+        wl = w.lower()
+        if wl not in stopwords and len(wl) >= 3:
+            keywords.add(wl)
+
+    return keywords
+
+
+def _score_file_relevance(rel_path, content, keywords, open_file_path=None):
+    """Score a file's relevance to the user's prompt (0.0 to 1.0+).
+    Higher score = more relevant = should be included in context."""
+    score = 0.0
+    filename = os.path.basename(rel_path).lower()
+    filepath_lower = rel_path.lower()
+
+    # Priority file bonus
+    if filename in PRIORITY_FILES:
+        score += 0.3
+
+    # Entry point bonus
+    if filename in ('main.py', 'app.py', 'index.js', 'server.js', 'main.dart'):
+        score += 0.2
+
+    # Config file bonus (always useful for context)
+    if filename in ('package.json', 'requirements.txt', 'pubspec.yaml', 'Cargo.toml', 'config.py'):
+        score += 0.15
+
+    # Currently open file gets highest priority
+    if open_file_path and rel_path == open_file_path:
+        score += 1.0
+
+    # Keyword matching in filename
+    for kw in keywords:
+        if kw in filename:
+            score += 0.4
+        if kw in filepath_lower:
+            score += 0.2
+
+    # Keyword matching in content (NLP search for exact code blocks)
+    content_lower = content.lower() if content else ''
+    for kw in keywords:
+        if len(kw) >= 3:
+            # Count occurrences, cap at 5 to avoid over-weighting
+            count = min(content_lower.count(kw), 5)
+            score += count * 0.05
+
+    # Search for function/class definitions matching keywords
+    for kw in keywords:
+        # Python: def keyword, class keyword
+        if re.search(rf'(?:def|class)\s+{re.escape(kw)}\b', content_lower):
+            score += 0.5
+        # JS: function keyword, const keyword = 
+        if re.search(rf'(?:function|const|let|var)\s+{re.escape(kw)}\b', content_lower):
+            score += 0.5
+        # Dart: class keyword, void keyword
+        if re.search(rf'(?:class|void|Widget)\s+{re.escape(kw)}\b', content_lower):
+            score += 0.5
+        # Import/require matching
+        if re.search(rf'(?:import|require|from)\s.*{re.escape(kw)}', content_lower):
+            score += 0.3
+
+    # Small files are cheaper to include (favor them slightly)
+    if content and len(content) < 500:
+        score += 0.1
+    elif content and len(content) > 5000:
+        score -= 0.05
+
+    return score
+
+
+def get_smart_context(project_path, prompt, open_file_content=None, open_file_path=None,
+                      max_context_chars=24000, mode='chat'):
+    """Smart context selection — reads project directory, scores files by relevance to prompt,
+    and returns the most relevant files within the context window limit.
+    
+    For 'agent' mode: includes ALL files (full project awareness).
+    For 'chat' mode: selects only the most relevant files using NLP.
+    
+    Returns: (context_string, file_list, selected_files_count, total_files_count)
+    """
+    file_list = []
+    file_data = []  # [(rel_path, content, size)]
+
+    if not os.path.isdir(project_path):
+        return '', [], 0, 0
+
+    # Step 1: Scan all project files
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if not d.startswith('.')
+                   and d not in ('node_modules', '__pycache__', '.git', 'venv', 'env',
+                                 'build', '.dart_tool', '.idea', '.gradle')]
+        for f in files:
+            if f.startswith('.'):
+                continue
+            ext = os.path.splitext(f)[1].lower()
+            if ext in BINARY_EXTENSIONS:
+                continue
+            rel_path = os.path.relpath(os.path.join(root, f), project_path)
+            file_list.append(rel_path)
+            try:
+                with open(os.path.join(root, f), 'r', errors='replace') as fh:
+                    content = fh.read()
+                file_data.append((rel_path, content, len(content)))
+            except Exception:
+                pass
+
+    total_files = len(file_list)
+
+    # Agent mode: include everything (like before)
+    if mode == 'agent':
+        context = ""
+        for rel_path, content, size in file_data:
+            if size <= 10000:
+                context += f"\n=== FILE: {rel_path} ===\n{content}\n"
+            else:
+                context += f"\n=== FILE: {rel_path} === (truncated, {size} chars)\n{content[:2000]}...\n"
+        return context, file_list, total_files, total_files
+
+    # Step 2: Extract keywords from prompt using NLP
+    keywords = _extract_keywords(prompt)
+
+    # Step 3: Score each file by relevance
+    scored_files = []
+    for rel_path, content, size in file_data:
+        score = _score_file_relevance(rel_path, content, keywords, open_file_path)
+        scored_files.append((rel_path, content, size, score))
+
+    # Step 4: Sort by relevance (highest first)
+    scored_files.sort(key=lambda x: x[3], reverse=True)
+
+    # Step 5: Select files that fit within context window
+    context = ""
+    selected_count = 0
+    current_chars = 0
+
+    # Always include the currently open file first
+    if open_file_content and open_file_path:
+        context += f"\n=== FILE: {open_file_path} (currently open) ===\n{open_file_content}\n"
+        current_chars += len(open_file_content) + 100
+
+    # Add project directory listing (always — gives AI awareness of full structure)
+    dir_listing = "Project files: " + ", ".join(file_list[:50])
+    if len(file_list) > 50:
+        dir_listing += f" ... and {len(file_list) - 50} more"
+    context = f"{dir_listing}\n{context}"
+    current_chars += len(dir_listing)
+
+    # Add ranked files until context limit
+    for rel_path, content, size, score in scored_files:
+        # Skip the open file (already included)
+        if open_file_path and rel_path == open_file_path:
+            continue
+        # Skip very low relevance files
+        if score < 0.1 and selected_count >= 3:
+            break
+        # Check if adding this file exceeds the limit
+        file_text = f"\n=== FILE: {rel_path} (relevance: {score:.1f}) ===\n"
+        if size <= 5000:
+            file_text += content + "\n"
+        else:
+            # For large files, include first 2000 chars + search for relevant code blocks
+            file_text += content[:2000]
+            # NLP: Find and include specific matching code blocks
+            relevant_blocks = _find_relevant_blocks(content, keywords)
+            if relevant_blocks:
+                file_text += f"\n... (truncated) ...\n\n[Relevant code blocks found]:\n{relevant_blocks}\n"
+            else:
+                file_text += "\n... (truncated) ...\n"
+
+        if current_chars + len(file_text) > max_context_chars:
+            # If we haven't included any ranked files yet, include at least a summary
+            if selected_count == 0:
+                file_text = f"\n=== FILE: {rel_path} (summarized) ===\n{content[:1000]}...\n"
+                context += file_text
+                selected_count += 1
+            break
+
+        context += file_text
+        current_chars += len(file_text)
+        selected_count += 1
+
+    return context, file_list, selected_count + (1 if open_file_content else 0), total_files
+
+
+def _find_relevant_blocks(content, keywords, max_block_chars=2000):
+    """NLP-based code block search — find functions, classes, and code blocks
+    that match the user's keywords. Returns the most relevant code blocks."""
+    blocks = []
+    lines = content.split('\n')
+    total_chars = 0
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower().strip()
+        # Check if this line contains a keyword-matching definition
+        is_relevant = False
+        for kw in keywords:
+            if len(kw) < 3:
+                continue
+            # Match function/class/method definitions
+            if re.search(rf'(?:def|class|function|const|let|var|void|Widget)\s+\w*{re.escape(kw)}\w*', line_lower):
+                is_relevant = True
+                break
+            # Match route decorators
+            if re.search(rf'@.*route.*{re.escape(kw)}', line_lower):
+                is_relevant = True
+                break
+            # Match import statements
+            if re.search(rf'(?:import|from|require).*{re.escape(kw)}', line_lower):
+                is_relevant = True
+                break
+
+        if is_relevant:
+            # Extract the block (function/class body) — grab surrounding lines
+            start = max(0, i - 1)
+            end = min(len(lines), i + 20)  # Grab up to 20 lines after the match
+            # Try to find the end of the block (next def/class or blank line gap)
+            for j in range(i + 1, min(len(lines), i + 50)):
+                stripped = lines[j].strip()
+                if stripped and not stripped.startswith('#') and not stripped.startswith('//'):
+                    indent = len(lines[j]) - len(lines[j].lstrip())
+                    def_indent = len(lines[i]) - len(lines[i].lstrip())
+                    if indent <= def_indent and j > i + 1 and re.match(r'(?:def |class |function |const |let |var |@)', stripped):
+                        end = j
+                        break
+                end = j + 1
+
+            block = '\n'.join(lines[start:end])
+            if total_chars + len(block) <= max_block_chars:
+                blocks.append(f"[Line {start+1}-{end}]:\n{block}")
+                total_chars += len(block)
+            if total_chars >= max_block_chars:
+                break
+
+    return '\n\n'.join(blocks)
+
+
 # Non-pip packages that AI sometimes puts in requirements.txt
 NON_PIP_PACKAGES = {
     'bootstrap', 'jquery', 'tailwindcss', 'tailwind', 'font-awesome',
@@ -653,24 +964,47 @@ def ai_generate(user):
     language = data.get('language', 'python')
     action = data.get('action', 'generate')  # generate, debug, explain, complete
     project_id = data.get('project_id')
+    open_file_path = data.get('open_file_path', '')
 
     if not prompt:
         return jsonify({'error': 'Prompt is required'}), 400
 
-    # Smart context: only include currently open file for speed
-    # Full project scan is too slow for quick generate/debug/explain
+    # Smart context: NLP-based file selection from full project directory
+    project_context = ''
+    context_info = ''
+    if project_id:
+        conn = get_db()
+        project = conn.execute(
+            'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+            (project_id, user['id'])
+        ).fetchone()
+        conn.close()
+        if project:
+            project_path = get_project_path(user['id'], project['name'])
+            smart_ctx, file_list, selected, total = get_smart_context(
+                project_path, prompt,
+                open_file_content=code_context,
+                open_file_path=open_file_path,
+                max_context_chars=20000,
+                mode='chat'
+            )
+            project_context = smart_ctx
+            context_info = f" ({selected}/{total} files selected by relevance)"
+
     system_prompts = {
-        'generate': f"You are YubiAI, an expert {language} coding assistant in YubiLab IDE. Generate clean, production-quality code. Return ONLY the code without markdown code blocks unless asked for explanation. Be concise and fast.",
-        'debug': f"You are YubiAI, a {language} debugging expert in YubiLab IDE. Find and fix bugs quickly. Show the fixed code and briefly explain the issue.",
-        'explain': f"You are YubiAI, a code explanation assistant in YubiLab IDE. Explain the code clearly and concisely — structure, purpose, and how pieces connect.",
-        'complete': f"You are YubiAI, an autocomplete assistant in YubiLab IDE. Complete the {language} code naturally. Return ONLY the completed code.",
+        'generate': f"You are YubiAI, an expert {language} coding assistant in YubiLab IDE. You have smart access to the project — the most relevant files are provided based on the user's query. Generate clean, production-quality code. Return ONLY the code without markdown code blocks unless asked for explanation.",
+        'debug': f"You are YubiAI, a {language} debugging expert in YubiLab IDE. You have smart access to the project — relevant files are provided. Find and fix bugs quickly. Show the fixed code and briefly explain the issue.",
+        'explain': f"You are YubiAI, a code explanation assistant in YubiLab IDE. You have smart access to the full project directory and relevant source files. Explain the code clearly — structure, purpose, and how pieces connect.",
+        'complete': f"You are YubiAI, an autocomplete assistant in YubiLab IDE. You have smart access to the project for context. Complete the {language} code naturally. Return ONLY the completed code.",
     }
 
     system_prompt = system_prompts.get(action, system_prompts['generate'])
 
-    # Build prompt with only the open file context (fast)
+    # Build prompt with smart project context
     parts = []
-    if code_context:
+    if project_context:
+        parts.append(f"Project context{context_info}:\n{project_context}")
+    elif code_context:
         parts.append(f"Currently open file ({language}):\n```{language}\n{code_context}\n```")
     parts.append(f"User request: {prompt}")
     full_prompt = '\n\n'.join(parts)
@@ -690,6 +1024,7 @@ def ai_generate(user):
         'model': result.get('model', model),
         'usage': result.get('usage', {}),
         'action': action,
+        'context_files': context_info,
     })
 
 
@@ -1814,16 +2149,19 @@ def ai_agent(user):
     def add_step(name, status, detail='', duration=0):
         steps.append({'name': name, 'status': status, 'detail': detail, 'duration': round(duration, 1)})
 
-    # === STEP 1: Understand project ===
+    # === STEP 1: Understand project (smart context) ===
     step_start = time.time()
     live_log.append({'icon': '\U0001f50d', 'message': f'Now analyzing project structure for "{project["name"]}"...', 'type': 'info'})
-    files_context, file_list = get_project_files_context(project_path)
+    # Agent mode: full project context with smart overflow handling
+    files_context, file_list, selected_count, total_count = get_smart_context(
+        project_path, prompt, mode='agent'
+    )
     if file_list:
-        live_log.append({'icon': '\U0001f4c2', 'message': f'Found {len(file_list)} existing files in project directory', 'type': 'info'})
+        live_log.append({'icon': '\U0001f4c2', 'message': f'Found {len(file_list)} existing files — loaded {selected_count}/{total_count} with full context', 'type': 'info'})
     else:
         live_log.append({'icon': '\U0001f4c2', 'message': 'Project is empty — starting fresh build', 'type': 'info'})
     add_step('Analyzing project', 'done',
-             f'Found {len(file_list)} files' if file_list else 'Empty project',
+             f'Found {len(file_list)} files ({selected_count} loaded)' if file_list else 'Empty project',
              time.time() - step_start)
 
     # Decide: single-request (small) or multi-request (large)

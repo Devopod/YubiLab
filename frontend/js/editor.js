@@ -988,12 +988,14 @@ async function sendAIMessage() {
             animateAgentProgress(progressEl);
         } else {
             endpoint = '/api/ai/generate';
+            const currentFilePath = (activeTabIndex >= 0 && openTabs[activeTabIndex]) ? openTabs[activeTabIndex].path : '';
             body = {
                 prompt,
                 code_context: codeContext,
                 language: projectData.language,
                 action: aiAction,
                 project_id: projectId,
+                open_file_path: currentFilePath,
             };
         }
 
