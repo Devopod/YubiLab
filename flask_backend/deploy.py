@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from auth import login_required
 from models import get_db
 from config import WORKSPACES_DIR
@@ -7,6 +7,7 @@ import subprocess
 import signal
 import socket as sock
 import time
+import glob as glob_mod
 
 deploy_bp = Blueprint('deploy', __name__)
 
@@ -465,3 +466,249 @@ def restart_deployment(user, project_id):
 
     # Re-deploy by calling the deploy function logic
     return deploy_project(user, project_id)
+
+
+def _get_flutter_env():
+    """Return env dict with Flutter and Android SDK in PATH."""
+    env = os.environ.copy()
+    flutter_bin = os.path.expanduser('~/flutter/bin')
+    android_tools = os.path.expanduser('~/android-sdk/cmdline-tools/latest/bin')
+    android_platform = os.path.expanduser('~/android-sdk/platform-tools')
+    if os.path.isdir(flutter_bin):
+        env['PATH'] = f"{flutter_bin}:{android_tools}:{android_platform}:{env.get('PATH', '')}"
+        env['ANDROID_HOME'] = os.path.expanduser('~/android-sdk')
+    return env
+
+
+@deploy_bp.route('/api/flutter/build/<int:project_id>', methods=['POST'])
+@login_required
+def flutter_build(user, project_id):
+    """Build a Flutter project (web or APK)."""
+    conn = get_db()
+    project = conn.execute(
+        'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+        (project_id, user['id'])
+    ).fetchone()
+    conn.close()
+
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+
+    project_path = get_project_path(user['id'], project['name'])
+    pubspec = os.path.join(project_path, 'pubspec.yaml')
+    if not os.path.isfile(pubspec):
+        return jsonify({'error': 'Not a Flutter project (no pubspec.yaml)'}), 400
+
+    data = request.get_json() or {}
+    build_type = data.get('type', 'web')  # 'web' or 'apk'
+
+    env = _get_flutter_env()
+
+    # First run flutter pub get
+    try:
+        pub_result = subprocess.run(
+            'flutter pub get', shell=True, cwd=project_path, env=env,
+            capture_output=True, text=True, timeout=120
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'flutter pub get timed out'}), 500
+
+    if pub_result.returncode != 0:
+        return jsonify({
+            'error': 'flutter pub get failed',
+            'details': pub_result.stderr[-2000:] if pub_result.stderr else 'Unknown error'
+        }), 500
+
+    # Build
+    if build_type == 'apk':
+        build_cmd = 'flutter build apk --release'
+    else:
+        build_cmd = 'flutter build web --release'
+
+    try:
+        result = subprocess.run(
+            build_cmd, shell=True, cwd=project_path, env=env,
+            capture_output=True, text=True, timeout=600
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': f'Flutter {build_type} build timed out (10 min limit)'}), 500
+
+    if result.returncode != 0:
+        return jsonify({
+            'error': f'Flutter {build_type} build failed',
+            'details': result.stderr[-2000:] if result.stderr else result.stdout[-2000:]
+        }), 500
+
+    if build_type == 'apk':
+        # Find the APK file
+        apk_path = os.path.join(project_path, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk')
+        if not os.path.isfile(apk_path):
+            # Try alternate path
+            apk_files = glob_mod.glob(os.path.join(project_path, 'build', '**', '*.apk'), recursive=True)
+            apk_path = apk_files[0] if apk_files else None
+
+        if not apk_path or not os.path.isfile(apk_path):
+            return jsonify({'error': 'APK build succeeded but file not found', 'output': result.stdout[-1000:]}), 500
+
+        apk_size = os.path.getsize(apk_path)
+        return jsonify({
+            'success': True,
+            'type': 'apk',
+            'message': 'APK built successfully!',
+            'size': apk_size,
+            'size_human': f'{apk_size / (1024*1024):.1f} MB',
+            'download_url': f'/api/flutter/download/{project_id}/apk',
+        })
+    else:
+        # Web build — serve via a static file server
+        web_dir = os.path.join(project_path, 'build', 'web')
+        if not os.path.isdir(web_dir):
+            return jsonify({'error': 'Web build succeeded but output directory not found'}), 500
+
+        # Deploy the web build using python http.server
+        port = find_free_port()
+        if not port:
+            return jsonify({'error': 'No free ports available'}), 500
+
+        log_file = os.path.join(project_path, '.deploy.log')
+        log_fd = open(log_file, 'w')
+        proc = subprocess.Popen(
+            f'python3 -m http.server {port}',
+            shell=True, cwd=web_dir, env=env,
+            stdin=subprocess.DEVNULL, stdout=log_fd, stderr=log_fd,
+            start_new_session=True,
+        )
+
+        deploy_url = f'/preview-app/{project_id}'
+        conn = get_db()
+        # Kill existing running deployment if any
+        existing = conn.execute(
+            'SELECT deploy_pid FROM deployments WHERE project_id = ? AND user_id = ? AND status = ?',
+            (project_id, user['id'], 'running')
+        ).fetchone()
+        if existing and existing['deploy_pid']:
+            try:
+                os.kill(existing['deploy_pid'], signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            conn.execute(
+                'UPDATE deployments SET status = ? WHERE project_id = ? AND user_id = ? AND status = ?',
+                ('stopped', project_id, user['id'], 'running')
+            )
+            conn.commit()
+
+        conn.execute(
+            'INSERT INTO deployments (project_id, user_id, deploy_port, deploy_pid, status, deploy_url) VALUES (?, ?, ?, ?, ?, ?)',
+            (project_id, user['id'], port, proc.pid, 'running', deploy_url)
+        )
+        conn.commit()
+        conn.close()
+
+        # Wait for server to be ready
+        for _ in range(10):
+            time.sleep(0.3)
+            try:
+                s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+                s.settimeout(1)
+                s.connect(('127.0.0.1', port))
+                s.close()
+                break
+            except (ConnectionRefusedError, OSError):
+                continue
+
+        return jsonify({
+            'success': True,
+            'type': 'web',
+            'message': 'Flutter web app built and deployed!',
+            'port': port,
+            'url': deploy_url,
+            'pid': proc.pid,
+            'ready': True,
+        })
+
+
+@deploy_bp.route('/api/flutter/download/<int:project_id>/<string:artifact>', methods=['GET'])
+@login_required
+def flutter_download(user, project_id, artifact):
+    """Download a Flutter build artifact (APK, etc.)."""
+    conn = get_db()
+    project = conn.execute(
+        'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+        (project_id, user['id'])
+    ).fetchone()
+    conn.close()
+
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+
+    project_path = get_project_path(user['id'], project['name'])
+
+    if artifact == 'apk':
+        apk_path = os.path.join(project_path, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk')
+        if not os.path.isfile(apk_path):
+            apk_files = glob_mod.glob(os.path.join(project_path, 'build', '**', '*.apk'), recursive=True)
+            apk_path = apk_files[0] if apk_files else None
+
+        if not apk_path or not os.path.isfile(apk_path):
+            return jsonify({'error': 'APK not found. Build the project first.'}), 404
+
+        project_name = project['name'].replace(' ', '_').replace('-', '_')
+        return send_file(apk_path, as_attachment=True, download_name=f'{project_name}.apk')
+
+    elif artifact == 'web':
+        # Download web build as zip
+        import shutil
+        web_dir = os.path.join(project_path, 'build', 'web')
+        if not os.path.isdir(web_dir):
+            return jsonify({'error': 'Web build not found. Build the project first.'}), 404
+
+        zip_path = os.path.join(project_path, 'build', 'web-build')
+        shutil.make_archive(zip_path, 'zip', web_dir)
+        project_name = project['name'].replace(' ', '_').replace('-', '_')
+        return send_file(f'{zip_path}.zip', as_attachment=True, download_name=f'{project_name}_web.zip')
+
+    return jsonify({'error': f'Unknown artifact type: {artifact}'}), 400
+
+
+@deploy_bp.route('/api/flutter/status/<int:project_id>', methods=['GET'])
+@login_required
+def flutter_status(user, project_id):
+    """Check if a project is a Flutter project and what builds are available."""
+    conn = get_db()
+    project = conn.execute(
+        'SELECT * FROM projects WHERE id = ? AND user_id = ?',
+        (project_id, user['id'])
+    ).fetchone()
+    conn.close()
+
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+
+    project_path = get_project_path(user['id'], project['name'])
+    pubspec = os.path.join(project_path, 'pubspec.yaml')
+
+    if not os.path.isfile(pubspec):
+        return jsonify({'is_flutter': False})
+
+    # Check if it's actually a Flutter project (not just a Dart project)
+    is_flutter = False
+    try:
+        with open(pubspec, 'r') as f:
+            content = f.read()
+            is_flutter = 'flutter' in content
+    except Exception:
+        pass
+
+    # Check available builds
+    web_built = os.path.isdir(os.path.join(project_path, 'build', 'web'))
+    apk_path = os.path.join(project_path, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk')
+    apk_built = os.path.isfile(apk_path)
+    apk_size = os.path.getsize(apk_path) if apk_built else 0
+
+    return jsonify({
+        'is_flutter': is_flutter,
+        'web_built': web_built,
+        'apk_built': apk_built,
+        'apk_size': apk_size,
+        'apk_size_human': f'{apk_size / (1024*1024):.1f} MB' if apk_built else None,
+    })

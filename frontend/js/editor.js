@@ -112,6 +112,9 @@ async function loadProject() {
         if (deployBtn) deployBtn.style.display = '';
 
         await refreshFiles();
+
+        // Check if Flutter project — show Build button
+        checkFlutterStatus();
     } catch (e) {
         showToast('Failed to load project', 'error');
     }
@@ -1653,6 +1656,162 @@ async function deleteDeployment(deployId) {
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     }
+}
+
+// ============================================
+// FLUTTER BUILD & DOWNLOAD
+// ============================================
+
+let _flutterStatus = null;
+
+async function checkFlutterStatus() {
+    if (!projectId) return;
+    try {
+        const res = await apiFetch(`/api/flutter/status/${projectId}`);
+        const data = await res.json();
+        _flutterStatus = data;
+        const btn = document.getElementById('flutter-build-btn');
+        if (btn && data.is_flutter) {
+            btn.style.display = '';
+        }
+    } catch (e) {
+        // Not a Flutter project or endpoint not available
+    }
+}
+
+function showFlutterBuildMenu() {
+    // Remove existing menu if any
+    const existing = document.getElementById('flutter-build-menu');
+    if (existing) { existing.remove(); return; }
+
+    const btn = document.getElementById('flutter-build-btn');
+    const rect = btn.getBoundingClientRect();
+
+    const menu = document.createElement('div');
+    menu.id = 'flutter-build-menu';
+    menu.style.cssText = `position:fixed;top:${rect.bottom+4}px;left:${rect.left}px;background:var(--bg-secondary,#161b22);border:1px solid var(--border-color,#30363d);border-radius:8px;padding:6px 0;z-index:9999;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,0.4);`;
+
+    let items = `
+        <div class="flutter-menu-item" onclick="flutterBuild('web')" style="padding:8px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--text-primary,#e6edf3);" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'">
+            <span>🌐</span> Build Web App
+        </div>
+        <div class="flutter-menu-item" onclick="flutterBuild('apk')" style="padding:8px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--text-primary,#e6edf3);" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'">
+            <span>📱</span> Build Android APK
+        </div>
+        <div style="border-top:1px solid var(--border-color,#30363d);margin:4px 0;"></div>
+    `;
+
+    if (_flutterStatus && _flutterStatus.apk_built) {
+        items += `
+        <div class="flutter-menu-item" onclick="flutterDownload('apk')" style="padding:8px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#58a6ff;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'">
+            <span>⬇️</span> Download APK (${_flutterStatus.apk_size_human})
+        </div>`;
+    }
+    if (_flutterStatus && _flutterStatus.web_built) {
+        items += `
+        <div class="flutter-menu-item" onclick="flutterDownload('web')" style="padding:8px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#58a6ff;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'">
+            <span>⬇️</span> Download Web Build (.zip)
+        </div>`;
+    }
+    if (!(_flutterStatus && (_flutterStatus.apk_built || _flutterStatus.web_built))) {
+        items += `
+        <div style="padding:8px 16px;font-size:0.78rem;color:var(--text-secondary,#8b949e);">
+            No builds yet. Build first to download.
+        </div>`;
+    }
+
+    menu.innerHTML = items;
+    document.body.appendChild(menu);
+
+    // Close on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu(e) {
+            if (!menu.contains(e.target) && e.target !== btn) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        });
+    }, 10);
+}
+
+async function flutterBuild(type) {
+    // Close menu
+    const menu = document.getElementById('flutter-build-menu');
+    if (menu) menu.remove();
+
+    const typeLabel = type === 'apk' ? 'Android APK' : 'Web App';
+    showToast(`Building Flutter ${typeLabel}... This may take a few minutes.`, 'info');
+    setStatus(`Building Flutter ${typeLabel}...`);
+
+    // Show progress in console
+    clearConsole();
+    switchBottomTab('console');
+    appendConsole(`=== Flutter ${typeLabel} Build ===\n`, 'info');
+    appendConsole(`Running flutter pub get...\n`, 'info');
+
+    try {
+        const res = await apiFetch(`/api/flutter/build/${projectId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            if (type === 'web') {
+                appendConsole(`\nBuild successful!\n`, 'success');
+                appendConsole(`Flutter web app deployed on port ${data.port}\n`, 'success');
+                appendConsole(`URL: ${window.location.origin}${data.url}\n`, 'info');
+                showToast('Flutter web app built and deployed!', 'success');
+                setStatus(`Web app deployed (port ${data.port})`);
+
+                // Auto-show in preview
+                setTimeout(() => {
+                    const frame = document.getElementById('preview-frame');
+                    frame.src = `${data.url}?t=${Date.now()}`;
+                    switchBottomTab('preview');
+                }, 500);
+
+                // Also open in browser panel
+                openInBrowser(data.url);
+                loadDeployments();
+            } else {
+                appendConsole(`\nAPK built successfully!\n`, 'success');
+                appendConsole(`Size: ${data.size_human}\n`, 'info');
+                appendConsole(`Download: ${data.download_url}\n`, 'info');
+                showToast(`APK built! Size: ${data.size_human}. Click Build > Download APK.`, 'success');
+                setStatus(`APK ready (${data.size_human})`);
+            }
+            // Refresh flutter status for download buttons
+            checkFlutterStatus();
+        } else {
+            appendConsole(`\nBuild FAILED:\n`, 'error');
+            appendConsole(`${data.error}\n`, 'error');
+            if (data.details) appendConsole(`\n${data.details}\n`, 'error');
+            showToast(`Flutter ${typeLabel} build failed: ${data.error}`, 'error');
+            setStatus('Build failed');
+        }
+    } catch (e) {
+        appendConsole(`\nBuild error: ${e.message}\n`, 'error');
+        showToast(`Build error: ${e.message}`, 'error');
+        setStatus('Build error');
+    }
+}
+
+function flutterDownload(artifact) {
+    // Close menu
+    const menu = document.getElementById('flutter-build-menu');
+    if (menu) menu.remove();
+
+    // Trigger download via hidden link
+    const url = `/api/flutter/download/${projectId}/${artifact}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast(`Downloading ${artifact === 'apk' ? 'APK' : 'web build'}...`, 'info');
 }
 
 // ============================================
